@@ -1,0 +1,42 @@
+# Implementation Plan: Multi-Tenant Menu Catalog Manager & Digital Menu QR Generator
+
+This plan outlines the second phase of the SaaS Outlet Settings Hub, enabling multi-tenant menu catalog management and digital menu QR code generation.
+
+## Proposed Changes
+
+### Settings Hub Page
+- **[MODIFY] `apps/pos/src/pages/SettingsPage.tsx`**:
+  - Connect the "Menu Catalog Manager" tab to render the new `<MenuCatalogSetup />` component instead of the placeholder card.
+
+### Menu Catalog Component
+- **[NEW] `apps/pos/src/components/settings/MenuCatalogSetup.tsx`**:
+  - **Real-time Master Catalog**:
+    - Connects to Firestore via `onSnapshot` querying `items` collection filtered by `outlet_id`.
+    - Group items dynamically by their `category` field.
+    - Render item cards displaying name, price (formatted in Rupees), tax group, and status.
+  - **Inline Stock Toggling**:
+    - Add an active toggle switch on each card to toggle `is_available` (`true`/`false`).
+    - Fires an `updateDoc` call instantly so waiter terminals (`OrderPanel.tsx`) respect availability in real time.
+  - **Create/Edit Item Modal**:
+    - Modal form with fields:
+      - Item Name (text)
+      - Category (combobox / select with option to enter a custom category)
+      - Price in Rupees (converted to **paise** before sending to Firestore)
+      - Tax Group ID (`tax_gst_5`, `tax_gst_18`, `tax_nil`)
+      - Availability toggle
+    - Saves document with `outlet_id: outletId` to enforce strict tenant isolation.
+  - **Digital Menu QR Code Generator Component**:
+    - Renders a card generating a pure functional QR code targeting `window.location.origin + '/#/digital-menu/' + outletId`.
+    - Implemented cleanly using canvas/SVG matrix rendering (without central logos or embedded icons, keeping it pristine).
+    - Includes a **"Download QR Poster"** button that extracts the high-resolution canvas/image blob for local download.
+
+## User Review Required
+> [!NOTE]
+> For the QR Code generation, I will generate a pure, high-resolution QR matrix via a lightweight SVG/Canvas generator to ensure crisp rendering and instant PNG/SVG downloading without requiring heavy external NPM rebuilds. Does this approach work for you?
+
+## Verification Plan
+1. Open the "Menu Catalog Manager" tab in Outlet Settings.
+2. Click "Create New Item" and add a new item with category, price in Rupees, and 5% GST tax group.
+3. Verify the item appears under its designated category.
+4. Toggle "Out of Stock" on an item and confirm the state updates in Firestore instantly.
+5. Verify the Digital Menu QR Code card renders the pure matrix pointing to `/digital-menu/:outletId` and test the "Download QR" action.

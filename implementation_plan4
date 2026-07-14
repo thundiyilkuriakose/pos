@@ -1,0 +1,51 @@
+# Implement Interactive Table Floorplan & Split-Screen Order Panel
+
+This plan covers the transformation of the static TablesPage into a fully interactive floorplan and the introduction of the Split-Screen Order Panel for active table management.
+
+## User Review Required
+> [!IMPORTANT]
+> The split-screen order panel (`OrderPanel.tsx`) will be designed as a large, right-side slide-over drawer (or a full-screen overlay) that sits on top of the Tables page. This keeps the user in the context of the floorplan while managing an order. Does a slide-over drawer sound good, or would you prefer a completely separate route for the order panel?
+
+## Proposed Changes
+
+### `apps/pos/src/pages/TablesPage.tsx`
+- **[MODIFY]** `TablesPage.tsx`
+  - Remove hardcoded table mocks.
+  - Implement a real-time Firestore listener (`onSnapshot`) on the `tables` collection to render the floorplan dynamically.
+  - Add click interactions to the table cards:
+    - **Available Table**: Prompt a quick modal to set the walk-in party size and name (defaulting to "Table X Walk-in"), then create the party in Firestore and mark the table as `occupied` using a batch write.
+    - **Occupied Table**: Fetch the active `current_party_id` for that table and open the `OrderPanel` slide-over.
+
+### `apps/pos/src/components/orders/`
+- **[NEW]** `OrderPanel.tsx`
+  - A split-screen overlay component (Slide-over drawer).
+  - **Left Pane (Menu Catalog)**:
+    - Fetch and display items from the `items` collection.
+    - Horizontal scrollbar for categories.
+    - Handle `variant_parent` items by opening a small popover to select the variant before adding to the cart.
+  - **Right Pane (Active Receipt)**:
+    - Syncs with the active party's document to fetch existing `pre_order_items` or running items.
+    - Displays line items with `+` / `-` quantity adjustments.
+    - **V1 Indian Tax Engine**: 
+      - Computes strictly in *paise* to avoid floating-point errors.
+      - Calculates Subtotal.
+      - Maps `tax_group_id` to standard CGST/SGST splits (e.g., 5% GST = 2.5% CGST + 2.5% SGST).
+      - Computes Grand Total and standard rounding.
+      - Formats final output to Rupees for display.
+    - **Action Buttons**: 
+      - "Print KOT": Updates all new line items' `kot_status` to `"sent"`, adds a timestamp, and logs a mock Capacitor Bluetooth printer call to the console.
+      - "Proceed to Bill": Opens a modal/overlay to select a payment method and finalize the bill.
+
+- **[NEW]** `WalkInModal.tsx`
+  - A simple, quick-action modal triggered when clicking an "Available" table to quickly establish an impromptu walk-in party.
+
+## Verification Plan
+
+### Automated Tests
+- No automated tests required for these UI changes, but type checking will be verified via TypeScript.
+
+### Manual Verification
+- Verify that clicking an Available table successfully seats a walk-in guest and marks the table as Occupied.
+- Verify that clicking an Occupied table successfully opens the OrderPanel.
+- Verify that the tax engine perfectly calculates 5% GST splits without floating point anomalies (e.g., 10.50 + 5% = 11.025 -> rounded appropriately).
+- Verify the KOT mock print and Proceed to Bill triggers correctly.

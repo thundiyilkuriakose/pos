@@ -1,0 +1,23 @@
+{
+  "name": "skillsetgo-pos-root",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*",
+    "functions"
+  ],
+  "scripts": {
+    "dev:pos": "npm run dev --workspace=apps/pos",
+    "dev:functions": "npm run build --workspace=functions && firebase emulators:start",
+    "build:shared": "npm run build --workspace=packages/shared",
+    "build:pos": "npm run build --workspace=apps/pos",
+    "build:functions": "npm run build --workspace=functions",
+    "deploy": "npm run build:pos && firebase deploy",
+    "deploy:functions": "npm run build:functions && firebase deploy --only functions",
+    "deploy:hosting": "npm run build:pos && firebase deploy --only hosting",
+    "test": "npm run test --workspaces"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  }
+}

@@ -1,0 +1,135 @@
+/* ════════════════════════════════════════════
+   SkillSetGo POS — Design Tokens
+   File: apps/pos/src/styles/tokens.css
+   ════════════════════════════════════════════ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600&family=Outfit:wght@500;600;700;800;900&display=swap');
+
+:root {
+  /* ─── Color Palette ─── */
+  --color-primary:        #942705; /* Deep Red-Brown */
+  --color-primary-hover:  #7a1f04;
+  --color-primary-light:  rgba(148, 39, 5, 0.08);
+  --color-accent:         #FDD355; /* Bright Yellow Gold */
+  --color-accent-hover:   #f5c62e;
+  --color-accent-text:    #1F1F1F; /* Charcoal Gray */
+  --color-support-1:      #6B8E23; /* Olive Green */
+  --color-support-1-light: rgba(107, 142, 35, 0.10);
+  --color-support-2:      #C7BA60; /* Warm Mustard */
+  --color-text:           #1F1F1F; /* Charcoal Gray */
+  --color-text-muted:     #6B6B6B;
+  --color-background:     #FDFCFA; /* Warm Off-White */
+  --color-surface:        #FFFFFF;
+  --color-border:         #E8E4DF;
+  --color-danger:         #D32F2F;
+  --color-danger-light:   rgba(211, 47, 47, 0.08);
+
+  /* ─── Status Colors (Table Grid) ─── */
+  --color-status-available:  #6B8E23;
+  --color-status-occupied:   #942705;
+  --color-status-reserved:   #FDD355;
+  --color-status-blocked:    #9E9E9E;
+
+  /* ─── Sync Indicator ─── */
+  --color-sync-online:       #4CAF50;
+  --color-sync-syncing:      #FDD355;
+  --color-sync-offline:      #D32F2F;
+
+  /* ─── Typography (Outfit + Inter) ─── */
+  --font-display:           'Outfit', sans-serif;
+  --font-body:              'Inter', sans-serif;
+
+  /* Logo */
+  --font-logo-weight:       800;
+
+  /* H1 */
+  --font-h1-size:           40px;
+  --font-h1-weight:         700;
+  --font-h1-lh:             1.2;
+
+  /* H2 */
+  --font-h2-size:           32px;
+  --font-h2-weight:         600;
+  --font-h2-lh:             1.25;
+
+  /* Subheading */
+  --font-sub-size:          22px;
+  --font-sub-weight:        500;
+  --font-sub-lh:            1.3;
+
+  /* Body (Inter) */
+  --font-body-size:         18px;
+  --font-body-weight:       400;
+  --font-body-lh:           1.65;
+
+  /* Caption (Inter) */
+  --font-cap-size:          14px;
+  --font-cap-weight:        300;
+  --font-cap-lh:            1.6;
+
+  /* Button (Outfit) */
+  --font-btn-size:          16px;
+  --font-btn-weight:        600;
+  --font-btn-lh:            1.2;
+  --font-btn-transform:     uppercase;
+
+  /* ─── Spacing Scale ─── */
+  --space-xs:   4px;
+  --space-sm:   8px;
+  --space-md:   16px;
+  --space-lg:   24px;
+  --space-xl:   32px;
+  --space-2xl:  48px;
+  --space-3xl:  64px;
+
+  /* ─── Border Radius ─── */
+  --radius-sm:  4px;
+  --radius-md:  8px;
+  --radius-lg:  12px;
+  --radius-xl:  16px;
+  --radius-pill: 9999px;
+
+  /* ─── Shadows ─── */
+  --shadow-sm:  0 1px 3px rgba(31, 31, 31, 0.06);
+  --shadow-md:  0 4px 12px rgba(31, 31, 31, 0.08);
+  --shadow-lg:  0 8px 24px rgba(31, 31, 31, 0.12);
+  --shadow-glow-accent: 0 0 20px rgba(253, 211, 85, 0.3);
+
+  /* ─── Transitions ─── */
+  --transition-fast:    150ms ease;
+  --transition-normal:  250ms ease;
+  --transition-slow:    400ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ─── Z-Index Layers ─── */
+  --z-dropdown:  100;
+  --z-modal:     200;
+  --z-toast:     300;
+  --z-sync-bar:  400;
+
+  /* ─── Touch Targets (restaurant POS) ─── */
+  --touch-min:   48px;
+  --touch-grid:  72px;
+}
+
+/* ─── Responsive Adjustments — Tablet Breakpoint ─── */
+@media (max-width: 1024px) {
+  :root {
+    --font-h1-size:   34px;
+    --font-h2-size:   28px;
+    --font-sub-size:  20px;
+    --font-body-size: 17px;
+    --font-btn-size:  15px;
+  }
+}
+
+/* ─── Responsive Adjustments — Mobile Breakpoint ─── */
+@media (max-width: 768px) {
+  :root {
+    --font-h1-size:   28px;
+    --font-h2-size:   22px;
+    --font-sub-size:  18px;
+    --font-body-size: 16px;
+    --font-cap-size:  13px;
+    --font-btn-size:  16px;
+  }
+}

@@ -1,0 +1,32 @@
+# Implementation Plan: Public Customer Digital Menu & Handoff Flow
+
+This plan covers creating the customer-facing mobile application in `apps/digital-menu` and linking the public route `/#/digital-menu/:outletId` so QR scans instantly work.
+
+## Proposed Changes
+
+### `apps/digital-menu` Workspace Creation
+- **[NEW] `apps/digital-menu/package.json`**: Workspace configuration with React, React Router, Firebase, and `@skillsetgo/shared` dependencies.
+- **[NEW] `apps/digital-menu/index.html`**: Mobile-optimized HTML entry point with viewport scaling.
+- **[NEW] `apps/digital-menu/src/main.tsx`**: React root setup.
+- **[NEW] `apps/digital-menu/src/App.tsx`**:
+  - **Mobile-First Layout**: Centered mobile container (`max-width: 480px`) with sleek iOS/Android app styling using brand design tokens (`--color-primary`, `--font-display`, `--radius-lg`).
+  - **Dynamic URL & Catalog Sync**: Extracts `outlet_id` from route params. Sets up an `onSnapshot` listener on the Firestore `items` collection filtering for `outlet_id` AND `is_available === true`.
+  - **Horizontal Category Scroll Header**: Category bar allowing smooth section jumps.
+  - **Variant Selector**: Variant selection modal for `item_kind === "variant_parent"`.
+  - **Interactive Cart & Waitlist Handoff**:
+    - Persistent floating bottom cart bar ("View Cart (N items)").
+    - Bottom sheet drawer displaying items with quantity controls.
+    - **"Send to Waitlist" Trigger**: Converts cart items into a pre-order token payload (e.g. `PRE-XXXX`) that customers present to the host for queue registration.
+
+### Routing Alignment
+- **[MODIFY] `apps/pos/src/router.tsx`**: Mount `/digital-menu/:outletId` under public routing so QR codes generated in the POS Settings page render the Digital Menu component immediately without additional dev servers.
+
+## User Review Required
+> [!NOTE]
+> For the Waitlist handoff, clicking "Send to Waitlist" will display a digital token card (e.g. "Token: PRE-8921") along with a summary of pre-ordered items for the guest to show to the host. Does this token card presentation fit your handoff workflow?
+
+## Verification Plan
+1. Launch/Navigate to `/#/digital-menu/OUT001`.
+2. Verify mobile-first layout loads brand styles and pulls live items with `is_available === true`.
+3. Filter by categories and test adding simple items & variant parents.
+4. Open the bottom sheet cart and click "Send to Waitlist" to verify token generation.

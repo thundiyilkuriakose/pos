@@ -1,0 +1,112 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ════════════════════════════════════════════
+    //  Helper Functions
+    // ════════════════════════════════════════════
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOutletStaff(outletId) {
+      return isAuthenticated()
+        && request.auth.token.outlet_id == outletId;
+    }
+
+    // ════════════════════════════════════════════
+    //  Outlet — only staff of that outlet
+    // ════════════════════════════════════════════
+    match /outlets/{outletId} {
+      allow read: if isOutletStaff(outletId);
+      allow write: if isOutletStaff(outletId)
+        && request.auth.token.role in ['owner', 'manager'];
+    }
+
+    // ════════════════════════════════════════════
+    //  Items (Menu Catalog) — staff write, public read
+    // ════════════════════════════════════════════
+    match /outlets/{outletId}/items/{itemId} {
+      allow read: if true;  // Digital menu needs public read
+      allow write: if isOutletStaff(outletId)
+        && request.auth.token.role in ['owner', 'manager'];
+    }
+
+    // ════════════════════════════════════════════
+    //  Categories — staff write, public read
+    // ════════════════════════════════════════════
+    match /outlets/{outletId}/categories/{catId} {
+      allow read: if true;
+      allow write: if isOutletStaff(outletId);
+    }
+
+    // ════════════════════════════════════════════
+    //  Tables — staff only
+    // ════════════════════════════════════════════
+    match /outlets/{outletId}/tables/{tableId} {
+      allow read, write: if isOutletStaff(outletId);
+    }
+
+    // ════════════════════════════════════════════
+    //  Parties — staff write, Cloud Functions write
+    //  Public can read their own party via party token
+    // ════════════════════════════════════════════
+    match /outlets/{outletId}/parties/{partyId} {
+      allow read: if true;  // Soundbox listener + digital menu needs read
+      allow write: if isOutletStaff(outletId);
+    }
+
+    // ════════════════════════════════════════════
+    //  Orders — staff only
+    // ════════════════════════════════════════════
+    match /outlets/{outletId}/orders/{orderId} {
+      allow read, write: if isOutletStaff(outletId);
+
+      // Line Items subcollection — staff only
+      match /line_items/{lineItemId} {
+        allow read, write: if isOutletStaff(outletId);
+      }
+    }
+
+    // ════════════════════════════════════════════
+    //  Staff — owner/manager can manage
+    // ════════════════════════════════════════════
+    match /outlets/{outletId}/staff/{staffId} {
+      allow read: if isOutletStaff(outletId);
+      allow write: if isOutletStaff(outletId)
+        && request.auth.token.role in ['owner', 'manager'];
+    }
+
+    // ════════════════════════════════════════════
+    //  Devices — staff only
+    // ════════════════════════════════════════════
+    match /outlets/{outletId}/devices/{deviceId} {
+      allow read, write: if isOutletStaff(outletId);
+    }
+
+    // ════════════════════════════════════════════
+    //  Tax Groups — staff only
+    // ════════════════════════════════════════════
+    match /outlets/{outletId}/tax_groups/{taxGroupId} {
+      allow read: if isOutletStaff(outletId);
+      allow write: if isOutletStaff(outletId)
+        && request.auth.token.role in ['owner', 'manager'];
+    }
+
+    // ════════════════════════════════════════════
+    //  Addon Groups — staff write, public read
+    // ════════════════════════════════════════════
+    match /outlets/{outletId}/addon_groups/{addonGroupId} {
+      allow read: if true;
+      allow write: if isOutletStaff(outletId);
+    }
+
+    // ════════════════════════════════════════════
+    //  Inventory — staff only
+    // ════════════════════════════════════════════
+    match /outlets/{outletId}/inventory/{invId} {
+      allow read, write: if isOutletStaff(outletId);
+    }
+  }
+}

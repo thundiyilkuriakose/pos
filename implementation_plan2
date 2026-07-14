@@ -1,0 +1,1359 @@
+# SkillSetGo POS — Finalized Implementation Plan (V1)
+
+An offline-first POS & restaurant management system built with Vite+React PWA, PouchDB↔CouchDB sync, CouchDB→PostgreSQL event projection, Capacitor Android wrapper, and proprietary hardware integrations (Virtual Soundbox via TTS & Bluetooth Thermal Printing).
+
+---
+
+## Locked-In V1 Scope Summary
+
+| Decision | Resolution |
+|----------|------------|
+| **Frontend** | Vite + React SPA (not Next.js) |
+| **Cloud DB** | CouchDB (sync) + PostgreSQL (analytics/reporting/webhook state) |
+| **Soundbox offline behavior** | Auto-fire on sync if party already Seated |
+| **Multi-outlet** | `outlet_id` partitioning from Day 1 |
+| **Digital Menu** | Full customer PWA: Browse → Cart → Pay via Razorpay |
+| **GST** | Full CGST+SGST+IGST line-item breakdown; e-invoicing deferred to V2 |
+| **Aggregators (Swiggy/Zomato)** | Deferred to V2 |
+| **KDS** | Deferred to V1.5; V1 uses printed KOTs only |
+| **Auth** | Cloud login (Email/OTP) for managers + locally cached PINs for staff |
+| **Inventory** | SKU-level stock counts only; recipe auto-deduction deferred to V2 |
+| **Soundbox audio** | Native Android TTS engine (multi-dialect dynamic strings) |
+
+---
+
+## System Architecture Overview
+
+```mermaid
+graph TB
+    subgraph "Customer Device"
+        DM["Digital Menu PWA<br/>(Vite+React)"]
+        RP["Razorpay Checkout"]
+    end
+
+    subgraph "Cloud Infrastructure"
+        BE["Node.js/Express<br/>Backend API"]
+        COUCH[("CouchDB<br/>(Sync Master)")]
+        PG[("PostgreSQL<br/>(Analytics)")]
+        WS["WebSocket Server"]
+        RZ["Razorpay Webhooks"]
+        CF["CouchDB Change Feed<br/>→ PG Projector"]
+    end
+
+    subgraph "Android Tablet (Capacitor)"
+        PWA["POS PWA<br/>(Vite+React)"]
+        PDB[("PouchDB<br/>(IndexedDB)")]
+        CAP_BT["Capacitor:<br/>Bluetooth Printer"]
+        CAP_SB["Capacitor:<br/>Soundbox TTS"]
+        CAP_WS["Capacitor:<br/>Native WebSocket"]
+        FS["Android<br/>Foreground Service"]
+    end
+
+    subgraph "Kitchen"
+        KOT_P["KOT Thermal<br/>Printer"]
+    end
+
+    DM -->|"Browse + Cart + Pay"| RP
+    RP -->|"payment.captured"| RZ
+    RZ -->|"Verify + Store"| BE
+    BE -->|"Update party doc"| COUCH
+    COUCH <-->|"Bi-directional Sync"| PDB
+    COUCH -->|"_changes feed"| CF
+    CF -->|"Project/Denormalize"| PG
+    BE -->|"Query reports"| PG
+    BE -->|"Push event"| WS
+    WS -->|"Persistent conn"| CAP_WS
+    CAP_WS -->|"Trigger"| CAP_SB
+    CAP_SB -->|"TTS Audio"| FS
+    PWA -->|"Staff marks Seated"| PDB
+    PDB -->|"Change listener"| PWA
+    PWA -->|"Print KOT"| CAP_BT
+    CAP_BT -->|"ESC/POS"| KOT_P
+```
+
+---
+
+## Parallel Workstreams & Gantt
+
+```mermaid
+gantt
+    title SkillSetGo POS V1 — Execution Timeline
+    dateFormat  YYYY-MM-DD
+    axisFormat  %b %d
+
+    section WS1: Database & Sync
+    Schema Design + Shared Package       :ws1a, 2026-07-14, 5d
+    CouchDB + PostgreSQL Cloud Setup     :ws1b, after ws1a, 4d
+    PouchDB Sync Engine + Conflicts      :ws1c, after ws1b, 5d
+    CouchDB→PG Change Feed Projector     :ws1d, after ws1b, 5d
+    Offline Queue + Retry + Archival     :ws1e, after ws1c, 3d
+
+    section WS2: Frontend POS UI
+    Design System (Tokens + CSS)         :ws2a, 2026-07-14, 4d
+    App Shell + Auth + Routing           :ws2b, after ws2a, 4d
+    Table Management UI                  :ws2c, after ws2b, 5d
+    Menu + Order Flow (Polymorphic)      :ws2d, after ws2b, 6d
+    Billing + GST Tax Engine             :ws2e, after ws2d, 5d
+    Inventory Dashboard (SKU)            :ws2f, after ws2e, 3d
+    Digital Menu Customer PWA            :ws2g, after ws2c, 6d
+    Queue + Party Management             :ws2h, after ws2c, 4d
+
+    section WS3: Capacitor Hardware Bridge
+    Capacitor Project Scaffold           :ws3a, 2026-07-14, 3d
+    Bluetooth Printer Plugin (Kotlin)    :ws3b, after ws3a, 7d
+    Soundbox TTS Plugin (Kotlin)         :ws3c, after ws3a, 5d
+    Native WebSocket Service (Kotlin)    :ws3d, after ws3c, 5d
+    Foreground Service + Lifecycle       :ws3e, after ws3d, 3d
+
+    section WS4: Backend Webhooks
+    Express + Auth + Middleware          :ws4a, 2026-07-14, 3d
+    Razorpay Webhook + Idempotency       :ws4b, after ws4a, 4d
+    Conditional Soundbox State Machine   :ws4c, after ws4b, 5d
+    WebSocket Push Service               :ws4d, after ws4c, 3d
+    Digital Menu API (Cart + Orders)     :ws4e, after ws4a, 5d
+    CouchDB Change Feed Consumer         :ws4f, after ws4d, 3d
+```
+
+---
+
+## WS1: Database & Sync Layer
+
+### 1.1 Polymorphic Document Schema
+
+All documents share a flat PouchDB database using the **Type Discriminator** pattern with ULID-prefixed `_id` values.
+
+#### Document ID Convention
+```
+{type}:{outlet_id}:{ulid}
+
+Examples:
+  item:OUT001:01J5KXYZ...       → Menu item
+  order:OUT001:01J5KXYZ...      → Order
+  table:OUT001:01J5KXYZ...      → Table
+  party:OUT001:01J5KXYZ...      → Party (queue→seated flow)
+  inv:OUT001:01J5KXYZ...        → Inventory SKU record
+  cat:OUT001:01J5KXYZ...        → Category
+  taxgrp:OUT001:01J5KXYZ...     → Tax group
+  addongrp:OUT001:01J5KXYZ...   → Add-on group
+  staff:OUT001:01J5KXYZ...      → Staff/user
+  outlet:OUT001                  → Outlet config
+  device:OUT001:DEV01            → Device registration
+```
+
+> [!NOTE]
+> ULID provides chronological sort order on `allDocs` and prefixed `_id` enables efficient range queries: `db.allDocs({ startkey: 'order:OUT001:', endkey: 'order:OUT001:\ufff0' })`.
+
+#### Polymorphic Item Schema
+
+```typescript
+// ════════════════════════════════════════════
+//  BASE ITEM — shared fields across all kinds
+// ════════════════════════════════════════════
+interface BaseItem {
+  _id: string;                    // "item:OUT001:01J5..."
+  _rev?: string;
+  type: "item";
+  schema_version: 1;
+
+  // ─── Identity ───
+  name: string;                   // "Chicken Biryani"
+  display_name?: string;          // Override for digital menu
+  sku?: string;                   // Barcode/SKU
+  category_id: string;            // Ref → cat doc
+  tags: string[];                 // ["bestseller", "spicy", "veg"]
+
+  // ─── Pricing (all amounts in paise) ───
+  base_price: number;             // ₹250 = 25000
+  tax_config: {
+    tax_group_id: string;         // Ref → taxgrp doc
+    is_inclusive: boolean;        // MRP-style inclusive pricing?
+  };
+
+  // ─── Availability ───
+  is_available: boolean;
+  available_channels: ("dine_in" | "takeaway" | "delivery" | "digital_menu")[];
+  outlet_id: string;
+
+  // ─── Polymorphic Discriminator ───
+  item_kind: "simple" | "recipe" | "combo" | "variant_parent";
+
+  // ─── Add-on Groups (shared across all kinds) ───
+  addon_group_ids: string[];      // Ref → addongrp docs
+
+  // ─── Metadata ───
+  sort_order: number;
+  image_url?: string;
+  created_at: string;             // ISO 8601
+  updated_at: string;
+  is_deleted: boolean;            // Soft delete for sync
+}
+
+// ═══════════ SIMPLE ITEM (retail/beverages) ═══════════
+interface SimpleItem extends BaseItem {
+  item_kind: "simple";
+  inventory: {
+    track: boolean;
+    unit: "pcs" | "kg" | "litre" | "ml" | "g";
+    current_stock: number;
+    low_stock_alert: number;
+  };
+}
+
+// ═══════════ RECIPE ITEM (kitchen-prepared) ═══════════
+// NOTE: Recipe is stored for V2 auto-deduction.
+//       V1 only uses the recipe for reference display.
+//       Stock is tracked at SKU level, not ingredient level.
+interface RecipeItem extends BaseItem {
+  item_kind: "recipe";
+  recipe: {
+    yield_qty: number;
+    yield_unit: string;
+    ingredients: RecipeIngredient[];
+    prep_time_minutes?: number;
+    instructions?: string;
+  };
+  inventory: {
+    track: boolean;               // V1: track finished dish count
+    unit: "pcs";
+    current_stock: number;
+    low_stock_alert: number;
+  };
+}
+
+interface RecipeIngredient {
+  inventory_item_id: string;      // Ref → inv doc (raw material)
+  name: string;                   // Denormalized for offline display
+  quantity: number;               // Per single serving
+  unit: "g" | "kg" | "ml" | "litre" | "pcs";
+  waste_percentage?: number;
+}
+
+// ═══════════ COMBO ITEM ═══════════
+interface ComboItem extends BaseItem {
+  item_kind: "combo";
+  combo: {
+    components: {
+      item_id: string;
+      item_name: string;          // Denormalized
+      quantity: number;
+      is_optional: boolean;
+    }[];
+    combo_discount: number;       // In paise
+  };
+}
+
+// ═══════════ VARIANT PARENT (Pizza → S/M/L) ═══════════
+interface VariantParentItem extends BaseItem {
+  item_kind: "variant_parent";
+  variants: ItemVariant[];
+}
+
+interface ItemVariant {
+  variant_id: string;
+  name: string;                   // "Large", "Regular"
+  price_override: number;         // Absolute price in paise
+  sku?: string;
+  inventory: {
+    track: boolean;
+    unit: "pcs" | "kg" | "litre" | "ml" | "g";
+    current_stock: number;
+    low_stock_alert: number;
+  };
+}
+
+// ═══════════ DISCRIMINATED UNION ═══════════
+type PolymorphicItem = SimpleItem | RecipeItem | ComboItem | VariantParentItem;
+```
+
+#### GST Tax Schema
+
+```typescript
+interface TaxGroupDoc {
+  _id: string;                    // "taxgrp:OUT001:01J5..."
+  type: "tax_group";
+  name: string;                   // "GST 5%", "GST 18%"
+  components: TaxComponent[];
+  outlet_id: string;
+  is_deleted: boolean;
+}
+
+interface TaxComponent {
+  name: "CGST" | "SGST" | "IGST" | "CESS";
+  rate: number;                   // Percentage: 2.5, 9, 18, etc.
+}
+
+// Example: GST 5% = CGST 2.5% + SGST 2.5%
+// Example: GST 18% (inter-state) = IGST 18%
+```
+
+#### Order, Party, Table, Staff Documents
+
+```typescript
+// ════════════════ ORDER ════════════════
+interface OrderDoc {
+  _id: string;
+  type: "order";
+  order_number: string;           // "SSG-DEV01-00042"
+  party_id: string;
+  table_id?: string;
+  status: "draft" | "confirmed" | "preparing" | "served" | "billed" | "closed" | "cancelled";
+  order_type: "dine_in" | "takeaway" | "delivery" | "digital_menu";
+
+  items: OrderLineItem[];
+
+  // ─── Financial (all in paise) ───
+  subtotal: number;
+  tax_breakdown: {
+    component: "CGST" | "SGST" | "IGST" | "CESS";
+    rate: number;
+    amount: number;
+  }[];
+  discount?: {
+    type: "percentage" | "flat";
+    value: number;
+    amount: number;               // Calculated discount in paise
+    reason?: string;
+  };
+  round_off: number;              // ±paise for rounding
+  grand_total: number;
+
+  payments: {
+    payment_id: string;
+    method: "cash" | "upi" | "card" | "razorpay" | "split";
+    amount: number;
+    razorpay_payment_id?: string;
+    timestamp: string;
+  }[];
+  payment_status: "unpaid" | "partially_paid" | "paid" | "refunded";
+
+  kot_printed: boolean;
+  kot_printed_at?: string;
+  soundbox_played: boolean;
+  soundbox_played_at?: string;
+
+  created_at: string;
+  updated_at: string;
+  created_by: string;             // Staff _id
+  outlet_id: string;
+  is_deleted: boolean;
+}
+
+interface OrderLineItem {
+  line_id: string;                // ULID for dedup during merge
+  item_id: string;
+  item_name: string;              // Denormalized
+  item_kind: "simple" | "recipe" | "combo" | "variant";
+  variant_id?: string;
+  variant_name?: string;
+  quantity: number;
+  unit_price: number;             // Paise (after variant override)
+  tax_group_id: string;
+  addons: { addon_id: string; name: string; price: number }[];
+  special_instructions?: string;
+  kot_status: "pending" | "sent" | "preparing" | "ready" | "served";
+}
+
+// ════════════════ PARTY ════════════════
+interface PartyDoc {
+  _id: string;
+  type: "party";
+  party_name: string;
+  party_size: number;
+  phone?: string;
+  status: "queued" | "seated" | "billing" | "closed";
+  table_id?: string;
+
+  // ─── Conditional Soundbox State ───
+  payment_received: boolean;
+  payment_id?: string;
+  payment_amount?: number;
+  payment_method?: string;
+  seated_at?: string;
+  soundbox_triggered: boolean;
+  kot_triggered: boolean;
+
+  // ─── Digital Menu Pre-Order ───
+  pre_order_items: OrderLineItem[];
+
+  queue_token?: string;           // "Q-007"
+  order_id?: string;              // Ref → order doc (created on seating)
+
+  created_at: string;
+  updated_at: string;
+  outlet_id: string;
+  is_deleted: boolean;
+}
+
+// ════════════════ TABLE ════════════════
+interface TableDoc {
+  _id: string;
+  type: "table";
+  table_number: string;
+  section: string;
+  capacity: number;
+  status: "available" | "occupied" | "reserved" | "blocked";
+  current_party_id?: string;
+  current_order_id?: string;
+  outlet_id: string;
+  is_deleted: boolean;
+}
+
+// ════════════════ INVENTORY (SKU-level) ════════════════
+interface InventoryDoc {
+  _id: string;
+  type: "inventory";
+  name: string;                   // "Basmati Rice 5kg Bag"
+  sku?: string;
+  unit: "pcs" | "kg" | "litre" | "ml" | "g";
+  current_stock: number;
+  low_stock_threshold: number;
+  cost_per_unit: number;          // Paise
+  supplier_name?: string;
+  outlet_id: string;
+  updated_at: string;
+  is_deleted: boolean;
+}
+
+// ════════════════ STAFF ════════════════
+interface StaffDoc {
+  _id: string;
+  type: "staff";
+  name: string;
+  email?: string;
+  phone: string;
+  role: "owner" | "manager" | "cashier" | "waiter" | "kitchen";
+  pin_hash: string;               // bcrypt hash of numeric PIN
+  is_active: boolean;
+  permissions: string[];          // ["billing", "menu_edit", "reports"]
+  outlet_ids: string[];           // Multi-outlet access
+  last_login_at?: string;
+  created_at: string;
+  is_deleted: boolean;
+}
+
+// ════════════════ OUTLET ════════════════
+interface OutletDoc {
+  _id: string;                    // "outlet:OUT001"
+  type: "outlet";
+  name: string;
+  address: string;
+  gstin?: string;
+  fssai_number?: string;
+  phone: string;
+  currency: "INR";
+  timezone: "Asia/Kolkata";
+  logo_url?: string;
+  receipt_header?: string;
+  receipt_footer?: string;
+  created_at: string;
+}
+
+// ════════════════ DEVICE REGISTRATION ════════════════
+interface DeviceDoc {
+  _id: string;                    // "device:OUT001:DEV01"
+  type: "device";
+  device_name: string;
+  device_code: string;            // "DEV01" — used in bill numbering
+  outlet_id: string;
+  bill_counter: number;           // Local sequential counter
+  kot_counter: number;
+  registered_at: string;
+  last_sync_at?: string;
+}
+
+// ════════════════ ADD-ON GROUP ════════════════
+interface AddonGroupDoc {
+  _id: string;
+  type: "addon_group";
+  name: string;                   // "Extra Toppings", "Spice Level"
+  selection_type: "single" | "multiple";
+  is_required: boolean;
+  min_selections?: number;
+  max_selections?: number;
+  addons: {
+    addon_id: string;
+    name: string;
+    price: number;                // Paise
+    is_available: boolean;
+  }[];
+  outlet_id: string;
+  is_deleted: boolean;
+}
+
+// ════════════════ CATEGORY ════════════════
+interface CategoryDoc {
+  _id: string;
+  type: "category";
+  name: string;
+  icon?: string;
+  sort_order: number;
+  parent_category_id?: string;    // Sub-categories
+  outlet_id: string;
+  is_deleted: boolean;
+}
+```
+
+### 1.2 CouchDB → PostgreSQL Event Projection Pipeline
+
+```mermaid
+sequenceDiagram
+    participant PDB as PouchDB (Device)
+    participant COUCH as CouchDB
+    participant PROJ as Change Feed Projector<br/>(Node.js worker)
+    participant PG as PostgreSQL
+
+    PDB->>COUCH: Sync writes
+    COUCH->>PROJ: _changes feed (live)
+    PROJ->>PROJ: Transform doc → relational rows
+    PROJ->>PG: INSERT/UPDATE into tables
+
+    Note over PG: Optimized tables:<br/>orders, line_items, payments,<br/>daily_sales, tax_report,<br/>inventory_movements
+```
+
+**PostgreSQL Tables (projection targets):**
+
+| PG Table | Source Doc | Purpose |
+|----------|-----------|---------|
+| `pg_orders` | `order:*` | Flat order records for queries |
+| `pg_order_line_items` | `order:*.items[]` | Denormalized line items |
+| `pg_payments` | `order:*.payments[]` | Payment records, Razorpay IDs |
+| `pg_tax_summary` | `order:*.tax_breakdown[]` | CGST/SGST/IGST aggregation |
+| `pg_daily_sales` | Aggregated | Daily revenue by outlet |
+| `pg_inventory_movements` | `inv:*` changes | Stock in/out log |
+| `pg_webhook_events` | Razorpay webhooks | Idempotency store |
+| `pg_party_state` | `party:*` | Soundbox state machine lookups |
+
+### 1.3 Sync & Conflict Resolution
+
+| Document Type | Strategy | Rationale |
+|---------------|----------|-----------|
+| `order` (line items) | **Semantic merge** — union of `items[]`, dedup by `line_id` | Two waiters adding items concurrently |
+| `order` (status) | **Last-write-wins** with `updated_at` | Status transitions are sequential |
+| `party` | **Server-wins** for `payment_*` fields; **LWW** for `status` | Webhook payment state is authoritative |
+| `table` | **Last-write-wins** | Single device per table typically |
+| `inventory` (stock) | **CRDT delta merge** — store deltas, not absolutes | Concurrent sales shouldn't lose deductions |
+| `item` / `category` | **Last-write-wins** | Admin edits are infrequent |
+
+### 1.4 PouchDB Mango Indexes
+
+```javascript
+// Items by category (menu grid)
+{ index: { fields: ['type', 'outlet_id', 'category_id', 'sort_order'], name: 'idx_items_by_cat' } }
+
+// Active orders
+{ index: { fields: ['type', 'outlet_id', 'status', 'created_at'], name: 'idx_orders_active' } }
+
+// Party queue
+{ index: { fields: ['type', 'outlet_id', 'status', 'created_at'], name: 'idx_party_queue' } }
+
+// Tables by section
+{ index: { fields: ['type', 'outlet_id', 'section', 'table_number'], name: 'idx_tables' } }
+
+// Low stock alerts
+{ index: { fields: ['type', 'outlet_id', 'current_stock'], name: 'idx_inv_stock' } }
+
+// Staff by outlet
+{ index: { fields: ['type', 'outlet_ids', 'is_active'], name: 'idx_staff' } }
+```
+
+---
+
+## WS2: Frontend POS UI
+
+### 2.1 Tech Stack
+
+| Layer | Choice | Rationale |
+|-------|--------|-----------|
+| Build | **Vite 6** | Clean static output for Capacitor `file://` |
+| Framework | **React 19** | Component ecosystem, hooks |
+| Routing | **React Router 7** (hash mode) | Avoids `file://` history API issues |
+| State | **Zustand** | Lightweight, offline-compatible |
+| DB Layer | **PouchDB + `useLiveQuery` hooks** | Reactive UI from local DB |
+| PWA | **Serwist** (vite-plugin) | Service worker + precaching |
+| Styling | **Vanilla CSS + Custom Properties** | Brand design tokens |
+| Fonts | **Outfit + Inter** (Google Fonts, self-hosted) | Offline availability |
+
+> [!IMPORTANT]
+> **React Router must use hash-based routing** (`createHashRouter`) inside Capacitor. The `file://` scheme does not support `pushState`/`popstate` correctly on all Android WebView versions. This is a known Capacitor caveat.
+
+### 2.2 Design System — CSS Custom Properties
+
+```css
+/* ════════════════════════════════════════════
+   SkillSetGo POS — Design Tokens
+   File: src/styles/tokens.css
+   ════════════════════════════════════════════ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600&family=Outfit:wght@500;600;700;800;900&display=swap');
+
+:root {
+  /* ─── Color Palette ─── */
+  --color-primary:      #942705;
+  --color-primary-hover: #7a1f04;
+  --color-primary-light: rgba(148, 39, 5, 0.08);
+  --color-accent:       #FDD355;
+  --color-accent-hover: #f5c62e;
+  --color-accent-text:  #1F1F1F;      /* Text ON accent bg */
+  --color-support-1:    #6B8E23;       /* Olive green */
+  --color-support-1-light: rgba(107, 142, 35, 0.10);
+  --color-support-2:    #C7BA60;       /* Warm mustard */
+  --color-text:         #1F1F1F;
+  --color-text-muted:   #6B6B6B;
+  --color-background:   #FDFCFA;
+  --color-surface:      #FFFFFF;
+  --color-border:       #E8E4DF;
+  --color-danger:       #D32F2F;
+  --color-danger-light: rgba(211, 47, 47, 0.08);
+
+  /* ─── Status Colors (Table Grid) ─── */
+  --color-status-available:  #6B8E23;
+  --color-status-occupied:   #942705;
+  --color-status-reserved:   #FDD355;
+  --color-status-blocked:    #9E9E9E;
+
+  /* ─── Sync Indicator ─── */
+  --color-sync-online:   #4CAF50;
+  --color-sync-syncing:  #FDD355;
+  --color-sync-offline:  #D32F2F;
+
+  /* ─── Typography — Outfit (Headings, Buttons, Logo) ─── */
+  --font-display:       'Outfit', sans-serif;
+  --font-body:          'Inter', sans-serif;
+
+  /* Logo */
+  --font-logo-weight:   800;
+
+  /* H1 */
+  --font-h1-size:       40px;
+  --font-h1-weight:     700;
+  --font-h1-lh:         1.2;
+
+  /* H2 */
+  --font-h2-size:       32px;
+  --font-h2-weight:     600;
+  --font-h2-lh:         1.25;
+
+  /* Subheading */
+  --font-sub-size:      22px;
+  --font-sub-weight:    500;
+  --font-sub-lh:        1.3;
+
+  /* Body (Inter) */
+  --font-body-size:     18px;
+  --font-body-weight:   400;
+  --font-body-lh:       1.65;
+
+  /* Caption (Inter) */
+  --font-cap-size:      14px;
+  --font-cap-weight:    300;
+  --font-cap-lh:        1.6;
+
+  /* Button (Outfit) */
+  --font-btn-size:      16px;
+  --font-btn-weight:    600;
+  --font-btn-lh:        1.2;
+  --font-btn-transform: uppercase;
+
+  /* ─── Spacing Scale ─── */
+  --space-xs:   4px;
+  --space-sm:   8px;
+  --space-md:   16px;
+  --space-lg:   24px;
+  --space-xl:   32px;
+  --space-2xl:  48px;
+  --space-3xl:  64px;
+
+  /* ─── Border Radius ─── */
+  --radius-sm:  4px;
+  --radius-md:  8px;
+  --radius-lg:  12px;
+  --radius-xl:  16px;
+  --radius-pill: 9999px;
+
+  /* ─── Shadows ─── */
+  --shadow-sm:  0 1px 3px rgba(31, 31, 31, 0.06);
+  --shadow-md:  0 4px 12px rgba(31, 31, 31, 0.08);
+  --shadow-lg:  0 8px 24px rgba(31, 31, 31, 0.12);
+  --shadow-glow-accent: 0 0 20px rgba(253, 211, 85, 0.3);
+
+  /* ─── Transitions ─── */
+  --transition-fast:    150ms ease;
+  --transition-normal:  250ms ease;
+  --transition-slow:    400ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ─── Z-Index Layers ─── */
+  --z-dropdown:  100;
+  --z-modal:     200;
+  --z-toast:     300;
+  --z-sync-bar:  400;
+
+  /* ─── Touch Targets (restaurant POS) ─── */
+  --touch-min:   48px;
+  --touch-grid:  72px;            /* Menu item cards */
+}
+
+/* ─── Tablet Breakpoint ─── */
+@media (max-width: 1024px) {
+  :root {
+    --font-h1-size: 34px;
+    --font-h2-size: 28px;
+    --font-sub-size: 20px;
+    --font-body-size: 17px;
+    --font-btn-size: 15px;
+  }
+}
+
+/* ─── Mobile Breakpoint ─── */
+@media (max-width: 768px) {
+  :root {
+    --font-h1-size: 28px;
+    --font-h2-size: 22px;
+    --font-sub-size: 18px;
+    --font-body-size: 16px;
+    --font-cap-size: 13px;
+    --font-btn-size: 16px;
+  }
+}
+```
+
+### 2.3 Application Routes
+
+```
+Hash-based routing: /#/path
+
+/#/                              → Dashboard
+/#/tables                        → Table grid (visual floor plan)
+/#/tables/:tableId               → Table detail → active order
+/#/queue                         → Party queue (Kanban board)
+/#/orders                        → Order list
+/#/orders/:orderId               → Order detail / billing / checkout
+/#/menu                          → Menu catalog management
+/#/menu/categories               → Category CRUD
+/#/menu/addons                   → Add-on group management
+/#/inventory                     → SKU inventory dashboard
+/#/reports                       → Sales, tax, inventory reports
+/#/reports/gst                   → CGST/SGST/IGST breakdown report
+/#/settings                      → General settings
+/#/settings/printers             → Bluetooth printer setup
+/#/settings/soundbox             → Soundbox config + TTS test
+/#/settings/sync                 → Sync status + manual trigger
+/#/settings/staff                → Staff CRUD + PIN management
+/#/settings/outlet               → Outlet profile + receipt config
+/#/login                         → Email/OTP login (managers)
+/#/pin                           → PIN entry (staff shift start)
+```
+
+### 2.4 Key UI Components
+
+| Component | Description |
+|-----------|-------------|
+| `<AppShell>` | Sidebar nav + top bar + sync indicator + content area |
+| `<TableGrid>` | Visual floor-plan grid with color-coded status badges |
+| `<OrderPanel>` | Split-screen: left=menu grid, right=running order |
+| `<MenuItemCard>` | Touch-optimized card showing item name, price, kind badge |
+| `<PolymorphicItemForm>` | Adapts form fields based on `item_kind` discriminator |
+| `<PartyQueueBoard>` | Kanban columns: Queued → Seated → Billing → Closed |
+| `<BillPreview>` | Receipt layout with line-item GST breakdown |
+| `<GSTBreakdownTable>` | CGST + SGST + IGST columns per line item |
+| `<SyncIndicator>` | Persistent badge: 🟢 Synced / 🟡 Syncing (N pending) / 🔴 Offline |
+| `<PrinterSetup>` | BT device scanner, connect/test/save |
+| `<SoundboxConfig>` | TTS language/voice picker, volume, test button |
+| `<InventoryTable>` | SKU list with stock levels, low-stock alerts |
+| `<LoginScreen>` | Email + OTP for managers |
+| `<PinPad>` | Numeric keypad for staff PIN entry |
+| `<Toast>` | Notification toasts for alerts, errors, print status |
+
+### 2.5 Offline UX Strategy
+
+- **Optimistic writes:** All PouchDB writes are local-first → instant UI.
+- **Sync badge:** Shows pending doc count when offline.
+- **Graceful degradation:** Reports page shows "Online required for aggregated reports" when offline but still shows today's local-only data.
+- **Offline bill numbering:** `SSG-{DEVICE_CODE}-{COUNTER}` → `SSG-DEV01-00042`.
+- **Font caching:** Outfit + Inter are self-hosted in `/public/fonts/` for offline rendering.
+
+---
+
+## WS3: Capacitor Hardware Bridge
+
+### 3.1 Soundbox Plugin (TTS-based)
+
+```typescript
+interface SoundboxPlugin {
+  // ─── TTS Configuration ───
+  initTTS(opts: {
+    language: string;              // "en-IN", "hi-IN", "ta-IN"
+    pitch?: number;                // 0.5 → 2.0 (default 1.0)
+    speechRate?: number;           // 0.5 → 2.0 (default 1.0)
+  }): Promise<{ available: boolean }>;
+
+  setLanguage(opts: { language: string }): Promise<void>;
+  getAvailableLanguages(): Promise<{ languages: string[] }>;
+
+  // ─── Announcement ───
+  playAnnouncement(opts: {
+    amount: number;                // In paise
+    paymentMethod: string;         // "UPI", "Card", "Cash"
+    customerName?: string;
+    language?: string;             // Override per-announcement
+  }): Promise<void>;
+
+  // ─── Controls ───
+  setVolume(opts: { level: number }): Promise<void>;
+  stopPlayback(): Promise<void>;
+  isSpeaking(): Promise<{ speaking: boolean }>;
+
+  // ─── Events ───
+  addListener(event: 'utteranceComplete', handler: () => void): Promise<void>;
+  addListener(event: 'utteranceError', handler: (e: { message: string }) => void): Promise<void>;
+  addListener(event: 'ttsInitError', handler: (e: { message: string }) => void): Promise<void>;
+}
+```
+
+**Native Kotlin Implementation:**
+- Uses Android `TextToSpeech` API (available on all Android 5+).
+- Constructs announcement string: `"Payment received. {amount} rupees via {method}"`.
+- Multi-dialect: `Locale("hi", "IN")` for Hindi, `Locale("en", "IN")` for English, etc.
+- Runs inside `SoundboxForegroundService` to play even when app is backgrounded.
+- Volume control via `AudioManager.STREAM_MUSIC`.
+
+### 3.2 Bluetooth Printer Plugin
+
+```typescript
+interface BluetoothPrinterPlugin {
+  // ─── Discovery ───
+  scanDevices(): Promise<{ devices: BTPrinterDevice[] }>;
+  connectDevice(opts: { address: string }): Promise<void>;
+  disconnectDevice(): Promise<void>;
+  getConnectionStatus(): Promise<{ connected: boolean; deviceName?: string }>;
+
+  // ─── Printing ───
+  printRaw(opts: { data: number[] }): Promise<void>;
+  printText(opts: {
+    text: string;
+    bold?: boolean;
+    align?: 'left' | 'center' | 'right';
+    size?: 1 | 2;
+  }): Promise<void>;
+  printReceipt(opts: { receiptHtml: string }): Promise<void>;
+  printKOT(opts: { kotData: KOTPayload }): Promise<void>;
+
+  feedPaper(opts: { lines: number }): Promise<void>;
+  cutPaper(): Promise<void>;
+
+  // ─── Events ───
+  addListener(event: 'printerDisconnected', handler: () => void): Promise<void>;
+  addListener(event: 'printComplete', handler: () => void): Promise<void>;
+  addListener(event: 'printError', handler: (e: { message: string }) => void): Promise<void>;
+}
+
+interface KOTPayload {
+  order_number: string;
+  table_number: string;
+  items: { name: string; qty: number; notes?: string }[];
+  timestamp: string;
+  kot_number: number;
+}
+
+interface BTPrinterDevice {
+  name: string;
+  address: string;
+  paired: boolean;
+}
+```
+
+### 3.3 Native WebSocket Plugin
+
+```typescript
+interface NativeWebSocketPlugin {
+  connect(opts: { url: string; token: string; outletId: string }): Promise<void>;
+  disconnect(): Promise<void>;
+  getStatus(): Promise<{ connected: boolean; reconnectAttempt: number }>;
+  sendMessage(opts: { payload: string }): Promise<void>;
+
+  addListener(event: 'message', handler: (data: { payload: string }) => void): Promise<void>;
+  addListener(event: 'connected', handler: () => void): Promise<void>;
+  addListener(event: 'disconnected', handler: (reason: { code: number; message: string }) => void): Promise<void>;
+}
+```
+
+### 3.4 Android Manifest Permissions
+
+```xml
+<!-- Bluetooth (printer) -->
+<uses-permission android:name="android.permission.BLUETOOTH" />
+<uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+<uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+<uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+    android:usesPermissionFlags="neverForLocation" />
+
+<!-- Foreground service (soundbox + WS) -->
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+<uses-permission android:name="android.permission.WAKE_LOCK" />
+
+<!-- Network -->
+<uses-permission android:name="android.permission.INTERNET" />
+<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+```
+
+---
+
+## WS4: Backend Webhooks & State Machine
+
+### 4.1 Conditional Soundbox — State Machine
+
+```
+CONDITION A: party.payment_received === true    (Razorpay webhook)
+CONDITION B: party.status === "seated"          (Staff on POS device)
+GUARD:       party.soundbox_triggered === false  (Prevent double-fire)
+```
+
+```mermaid
+stateDiagram-v2
+    [*] --> QUEUED: Customer joins queue<br/>+ optionally orders on digital menu
+
+    QUEUED --> QUEUED_PAID: Razorpay webhook<br/>payment.captured
+    QUEUED --> SEATED_UNPAID: Staff marks Seated
+
+    QUEUED_PAID --> TRIGGER_ZONE: Staff marks Seated
+    SEATED_UNPAID --> TRIGGER_ZONE: Razorpay webhook<br/>payment.captured
+
+    state TRIGGER_ZONE {
+        [*] --> Evaluate
+        Evaluate --> FireEvents: A AND B AND NOT triggered
+        FireEvents --> MarkTriggered
+        MarkTriggered --> [*]
+    }
+
+    TRIGGER_ZONE --> ACTIVE: Soundbox + KOT fired
+
+    ACTIVE --> BILLING: Staff opens bill
+    BILLING --> CLOSED: Settlement complete
+
+    note right of TRIGGER_ZONE
+        Fires BOTH:
+        1. WebSocket → TTS announcement
+        2. WebSocket → KOT print
+    end note
+```
+
+### 4.2 Offline Auto-Fire on Reconnect
+
+```mermaid
+sequenceDiagram
+    participant CUST as Customer
+    participant RZ as Razorpay
+    participant BE as Backend
+    participant COUCH as CouchDB
+    participant PG as PostgreSQL
+    participant PDB as PouchDB (Offline!)
+    participant POS as POS Staff
+
+    CUST->>RZ: Pay via digital menu
+    RZ->>BE: payment.captured webhook
+    BE->>COUCH: party.payment_received = true
+    BE->>PG: pg_party_state: payment_received = true
+    Note over PDB: DEVICE IS OFFLINE
+
+    POS->>PDB: Mark party "seated" (LOCAL only)
+    Note over PDB: status=seated, payment_received=false<br/>(stale — hasn't synced yet)
+
+    Note over PDB,COUCH: 📶 Network restored
+
+    PDB->>COUCH: Push: status = "seated"
+    COUCH->>PDB: Pull: payment_received = true
+
+    Note over COUCH: Both conditions now present<br/>in merged document
+
+    COUCH->>BE: _changes feed: party doc updated
+    BE->>BE: checkAndTriggerSoundbox()
+    BE->>POS: WebSocket: SOUNDBOX_TRIGGER
+    BE->>POS: WebSocket: KOT_TRIGGER
+    POS->>POS: 🔊 TTS: "Payment received..."
+    POS->>POS: 🖨️ KOT prints
+
+    Note over BE: Auto-fired on sync,<br/>no staff re-trigger needed
+```
+
+### 4.3 Backend Server Layout
+
+```
+backend/
+├── src/
+│   ├── server.ts                      ← Express entry + middleware
+│   ├── routes/
+│   │   ├── webhook.razorpay.ts        ← Razorpay webhook (raw body)
+│   │   ├── api.auth.ts                ← Email/OTP login + JWT
+│   │   ├── api.digital-menu.ts        ← Public: menu browse, cart, order
+│   │   ├── api.orders.ts              ← Razorpay order creation
+│   │   └── api.health.ts
+│   ├── services/
+│   │   ├── payment.service.ts         ← Razorpay verify + state update
+│   │   ├── soundbox.service.ts        ← checkAndTriggerSoundbox()
+│   │   ├── auth.service.ts            ← OTP send/verify, JWT issue
+│   │   ├── tax.service.ts             ← GST calculation engine
+│   │   └── projector.service.ts       ← CouchDB → PG projector
+│   ├── websocket/
+│   │   ├── ws.server.ts               ← ws library server
+│   │   └── ws.auth.ts                 ← Token-based WS authentication
+│   ├── db/
+│   │   ├── couch.client.ts            ← nano client
+│   │   ├── pg.client.ts               ← pg / knex client
+│   │   └── pg.migrations/             ← SQL migration files
+│   ├── workers/
+│   │   └── change-feed.worker.ts      ← CouchDB _changes → PG sync
+│   └── config/
+│       └── env.ts
+├── package.json
+├── tsconfig.json
+└── Dockerfile
+```
+
+---
+
+## Exact Monorepo File Layout
+
+> [!IMPORTANT]
+> This is the **complete file-by-file listing** that will be generated inside `e:\SkillSetGo - POS\`. Every file listed below will be created during scaffolding.
+
+```
+e:\SkillSetGo - POS\
+│
+├── package.json                          ← Monorepo root (npm workspaces)
+├── tsconfig.base.json                    ← Shared TS config (paths, strict mode)
+├── .gitignore
+├── .nvmrc                                ← Node 20 LTS
+├── README.md
+│
+├── packages/
+│   └── shared/                           ← @skillsetgo/shared (npm workspace)
+│       ├── package.json
+│       ├── tsconfig.json
+│       └── src/
+│           ├── index.ts                  ← Barrel export
+│           ├── schemas/
+│           │   ├── item.schema.ts        ← PolymorphicItem types
+│           │   ├── order.schema.ts       ← OrderDoc, OrderLineItem
+│           │   ├── party.schema.ts       ← PartyDoc
+│           │   ├── table.schema.ts       ← TableDoc
+│           │   ├── inventory.schema.ts   ← InventoryDoc
+│           │   ├── staff.schema.ts       ← StaffDoc
+│           │   ├── outlet.schema.ts      ← OutletDoc
+│           │   ├── device.schema.ts      ← DeviceDoc
+│           │   ├── category.schema.ts    ← CategoryDoc
+│           │   ├── addon.schema.ts       ← AddonGroupDoc
+│           │   ├── tax.schema.ts         ← TaxGroupDoc, TaxComponent
+│           │   └── index.ts              ← Barrel
+│           ├── constants/
+│           │   ├── doc-types.ts          ← Document type string constants
+│           │   ├── order-status.ts       ← Status enums
+│           │   ├── payment-methods.ts
+│           │   └── index.ts
+│           ├── utils/
+│           │   ├── ulid.ts              ← ULID generator
+│           │   ├── doc-id.ts            ← buildDocId(type, outletId)
+│           │   ├── money.ts             ← Paise ↔ Rupees, rounding
+│           │   ├── gst.ts              ← GST calculation helpers
+│           │   └── index.ts
+│           └── types/
+│               ├── ws-messages.ts        ← WebSocket message types
+│               ├── capacitor-plugins.ts  ← Plugin interfaces
+│               └── index.ts
+│
+├── apps/
+│   ├── pos/                              ← @skillsetgo/pos (main POS PWA)
+│   │   ├── package.json
+│   │   ├── tsconfig.json
+│   │   ├── vite.config.ts
+│   │   ├── capacitor.config.ts
+│   │   ├── index.html
+│   │   ├── public/
+│   │   │   ├── manifest.json             ← PWA manifest
+│   │   │   ├── favicon.ico
+│   │   │   ├── icons/                    ← PWA icons (192, 512)
+│   │   │   └── fonts/                    ← Self-hosted Outfit + Inter
+│   │   │       ├── Outfit-Variable.woff2
+│   │   │       └── Inter-Variable.woff2
+│   │   └── src/
+│   │       ├── main.tsx                  ← React root + PouchDB init
+│   │       ├── App.tsx                   ← HashRouter + AppShell
+│   │       ├── router.tsx                ← Route definitions
+│   │       ├── sw.ts                     ← Service worker (Serwist)
+│   │       │
+│   │       ├── styles/
+│   │       │   ├── tokens.css            ← Design tokens (:root vars)
+│   │       │   ├── reset.css             ← CSS reset/normalize
+│   │       │   ├── typography.css        ← Font-face + heading styles
+│   │       │   ├── components.css        ← Shared component styles
+│   │       │   ├── layout.css            ← Grid, sidebar, shell
+│   │       │   ├── animations.css        ← Micro-animations, transitions
+│   │       │   └── index.css             ← Master import file
+│   │       │
+│   │       ├── db/
+│   │       │   ├── pouchdb.ts            ← DB init, sync setup, online detect
+│   │       │   ├── hooks.ts              ← useLiveQuery, useDoc, useSyncStatus
+│   │       │   ├── indexes.ts            ← Mango index creation
+│   │       │   ├── conflicts.ts          ← Conflict resolution strategies
+│   │       │   └── archival.ts           ← Auto-archive old docs
+│   │       │
+│   │       ├── stores/
+│   │       │   ├── auth.store.ts         ← Current user, session, PIN state
+│   │       │   ├── ui.store.ts           ← Sidebar, modals, toasts
+│   │       │   ├── sync.store.ts         ← Sync status, pending count
+│   │       │   ├── printer.store.ts      ← Printer connection state
+│   │       │   └── soundbox.store.ts     ← Soundbox config, TTS state
+│   │       │
+│   │       ├── services/
+│   │       │   ├── order.service.ts      ← Order CRUD, line-item ops
+│   │       │   ├── party.service.ts      ← Queue→Seated→Billing flow
+│   │       │   ├── table.service.ts      ← Table status management
+│   │       │   ├── inventory.service.ts  ← SKU stock deduction
+│   │       │   ├── billing.service.ts    ← GST calc, bill generation
+│   │       │   ├── auth.service.ts       ← Login, PIN verify (local)
+│   │       │   ├── print.service.ts      ← Receipt/KOT formatting
+│   │       │   └── soundbox.service.ts   ← Handle WS triggers → TTS
+│   │       │
+│   │       ├── plugins/
+│   │       │   ├── printer.ts            ← BluetoothPrinterPlugin wrapper
+│   │       │   ├── soundbox.ts           ← SoundboxPlugin wrapper
+│   │       │   └── native-ws.ts          ← NativeWebSocketPlugin wrapper
+│   │       │
+│   │       ├── components/
+│   │       │   ├── layout/
+│   │       │   │   ├── AppShell.tsx       ← Sidebar + topbar + content
+│   │       │   │   ├── Sidebar.tsx
+│   │       │   │   ├── TopBar.tsx
+│   │       │   │   └── SyncIndicator.tsx
+│   │       │   ├── common/
+│   │       │   │   ├── Button.tsx
+│   │       │   │   ├── Card.tsx
+│   │       │   │   ├── Modal.tsx
+│   │       │   │   ├── Toast.tsx
+│   │       │   │   ├── Badge.tsx
+│   │       │   │   ├── Input.tsx
+│   │       │   │   ├── Select.tsx
+│   │       │   │   ├── Spinner.tsx
+│   │       │   │   └── EmptyState.tsx
+│   │       │   ├── tables/
+│   │       │   │   ├── TableGrid.tsx
+│   │       │   │   └── TableCard.tsx
+│   │       │   ├── orders/
+│   │       │   │   ├── OrderPanel.tsx
+│   │       │   │   ├── MenuGrid.tsx
+│   │       │   │   ├── MenuItemCard.tsx
+│   │       │   │   ├── OrderLineItem.tsx
+│   │       │   │   ├── OrderSummary.tsx
+│   │       │   │   └── AddonSelector.tsx
+│   │       │   ├── billing/
+│   │       │   │   ├── BillPreview.tsx
+│   │       │   │   ├── GSTBreakdown.tsx
+│   │       │   │   ├── PaymentModal.tsx
+│   │       │   │   └── DiscountInput.tsx
+│   │       │   ├── queue/
+│   │       │   │   ├── PartyQueueBoard.tsx
+│   │       │   │   ├── PartyCard.tsx
+│   │       │   │   └── AddPartyModal.tsx
+│   │       │   ├── menu/
+│   │       │   │   ├── PolymorphicItemForm.tsx
+│   │       │   │   ├── CategoryManager.tsx
+│   │       │   │   ├── AddonGroupForm.tsx
+│   │       │   │   └── ItemKindSelector.tsx
+│   │       │   ├── inventory/
+│   │       │   │   ├── InventoryTable.tsx
+│   │       │   │   ├── StockUpdateModal.tsx
+│   │       │   │   └── LowStockAlert.tsx
+│   │       │   ├── settings/
+│   │       │   │   ├── PrinterSetup.tsx
+│   │       │   │   ├── SoundboxConfig.tsx
+│   │       │   │   ├── SyncStatus.tsx
+│   │       │   │   ├── StaffManager.tsx
+│   │       │   │   └── OutletProfile.tsx
+│   │       │   └── auth/
+│   │       │       ├── LoginScreen.tsx
+│   │       │       └── PinPad.tsx
+│   │       │
+│   │       └── pages/
+│   │           ├── DashboardPage.tsx
+│   │           ├── TablesPage.tsx
+│   │           ├── TableDetailPage.tsx
+│   │           ├── QueuePage.tsx
+│   │           ├── OrdersPage.tsx
+│   │           ├── OrderDetailPage.tsx
+│   │           ├── MenuPage.tsx
+│   │           ├── CategoriesPage.tsx
+│   │           ├── AddonsPage.tsx
+│   │           ├── InventoryPage.tsx
+│   │           ├── ReportsPage.tsx
+│   │           ├── GSTReportPage.tsx
+│   │           ├── SettingsPage.tsx
+│   │           ├── PrinterSettingsPage.tsx
+│   │           ├── SoundboxSettingsPage.tsx
+│   │           ├── SyncSettingsPage.tsx
+│   │           ├── StaffPage.tsx
+│   │           ├── OutletPage.tsx
+│   │           ├── LoginPage.tsx
+│   │           └── PinPage.tsx
+│   │
+│   ├── digital-menu/                     ← @skillsetgo/digital-menu (customer PWA)
+│   │   ├── package.json
+│   │   ├── tsconfig.json
+│   │   ├── vite.config.ts
+│   │   ├── index.html
+│   │   ├── public/
+│   │   │   └── manifest.json
+│   │   └── src/
+│   │       ├── main.tsx
+│   │       ├── App.tsx
+│   │       ├── router.tsx
+│   │       ├── styles/
+│   │       │   ├── tokens.css            ← Same brand tokens
+│   │       │   ├── menu.css
+│   │       │   └── index.css
+│   │       ├── services/
+│   │       │   ├── api.ts                ← Fetch from backend API
+│   │       │   ├── cart.ts               ← Local cart state
+│   │       │   └── razorpay.ts           ← Razorpay Checkout SDK
+│   │       ├── components/
+│   │       │   ├── MenuBrowser.tsx
+│   │       │   ├── MenuItem.tsx
+│   │       │   ├── Cart.tsx
+│   │       │   ├── CartItem.tsx
+│   │       │   ├── CheckoutSheet.tsx
+│   │       │   ├── QueueStatus.tsx
+│   │       │   └── PaymentSuccess.tsx
+│   │       └── pages/
+│   │           ├── MenuPage.tsx           ← /:outletId
+│   │           ├── CartPage.tsx           ← /:outletId/cart
+│   │           ├── CheckoutPage.tsx       ← /:outletId/checkout
+│   │           └── StatusPage.tsx         ← /:outletId/status/:partyId
+│   │
+│   └── android/                          ← Capacitor Android project
+│       ├── app/
+│       │   ├── build.gradle.kts
+│       │   └── src/main/
+│       │       ├── AndroidManifest.xml
+│       │       ├── res/
+│       │       │   ├── values/
+│       │       │   │   ├── strings.xml
+│       │       │   │   └── styles.xml
+│       │       │   └── drawable/
+│       │       │       └── ic_notification.xml
+│       │       └── java/com/skillsetgo/pos/
+│       │           ├── MainActivity.kt
+│       │           ├── plugins/
+│       │           │   ├── BluetoothPrinterPlugin.kt
+│       │           │   ├── SoundboxPlugin.kt
+│       │           │   └── NativeWebSocketPlugin.kt
+│       │           └── services/
+│       │               ├── PrinterService.kt
+│       │               ├── EscPosBuilder.kt
+│       │               ├── TtsSoundboxService.kt
+│       │               ├── WebSocketService.kt
+│       │               └── ForegroundServiceManager.kt
+│       ├── build.gradle.kts
+│       ├── settings.gradle.kts
+│       └── gradle.properties
+│
+├── backend/                              ← @skillsetgo/backend
+│   ├── package.json
+│   ├── tsconfig.json
+│   ├── Dockerfile
+│   ├── docker-compose.yml                ← CouchDB + PostgreSQL + backend
+│   └── src/
+│       ├── server.ts
+│       ├── config/
+│       │   └── env.ts
+│       ├── middleware/
+│       │   ├── auth.middleware.ts         ← JWT verification
+│       │   ├── raw-body.middleware.ts     ← For webhook signature
+│       │   └── error.middleware.ts
+│       ├── routes/
+│       │   ├── webhook.razorpay.ts
+│       │   ├── api.auth.ts
+│       │   ├── api.digital-menu.ts
+│       │   ├── api.orders.ts
+│       │   ├── api.reports.ts
+│       │   └── api.health.ts
+│       ├── services/
+│       │   ├── payment.service.ts
+│       │   ├── soundbox.service.ts
+│       │   ├── auth.service.ts
+│       │   ├── tax.service.ts
+│       │   └── projector.service.ts
+│       ├── websocket/
+│       │   ├── ws.server.ts
+│       │   └── ws.auth.ts
+│       ├── db/
+│       │   ├── couch.client.ts
+│       │   ├── pg.client.ts
+│       │   └── migrations/
+│       │       ├── 001_create_orders.sql
+│       │       ├── 002_create_line_items.sql
+│       │       ├── 003_create_payments.sql
+│       │       ├── 004_create_tax_summary.sql
+│       │       ├── 005_create_webhook_events.sql
+│       │       ├── 006_create_party_state.sql
+│       │       └── 007_create_daily_sales.sql
+│       └── workers/
+│           └── change-feed.worker.ts
+│
+└── docs/
+    ├── architecture.md                   ← This plan (reference copy)
+    ├── api-spec.md                       ← Digital menu + backend REST API
+    └── esc-pos-commands.md               ← Printer command reference
+```
+
+---
+
+## Structural Risks & Mitigations
+
+| # | Risk | Severity | Mitigation |
+|---|------|----------|------------|
+| R1 | **PouchDB + Vite ESM bundling:** PouchDB has legacy CommonJS internals and Node.js polyfill dependencies (`events`, `buffer`). Vite's ESM-first bundler may fail to resolve them without explicit configuration. | 🔴 High | Add `optimizeDeps.include: ['pouchdb', 'pouchdb-find']` in `vite.config.ts`. Use `vite-plugin-node-polyfills` for `buffer` and `events`. Pin PouchDB to a version known to work with Vite 6. Test build early. |
+| R2 | **Hash routing + deep links:** The Digital Menu app uses path-based routing for SEO (QR code links like `menu.skillsetgo.com/OUT001`), but the POS app uses hash routing. Two different routing modes in the same monorepo. | 🟡 Medium | They're separate Vite apps with separate `vite.config.ts`. Digital Menu uses `createBrowserRouter`; POS uses `createHashRouter`. No conflict, but developers must be aware of the distinction. |
+| R3 | **CouchDB→PG projector lag:** Under high write volume (busy dinner service), the change feed projector may fall behind, causing stale reports. | 🟡 Medium | The projector runs as a dedicated Node.js worker with `_changes?feed=continuous&heartbeat=10000`. Add a `seq` checkpoint to resume from last-processed change. Monitor lag with a heartbeat metric. Reports page shows "Last synced: X minutes ago" indicator. |
+| R4 | **Android TTS voice quality varies by OEM:** Samsung, Xiaomi, and stock Android ship different TTS engines (Google TTS, Samsung TTS, etc.) with varying quality and language support. | 🟡 Medium | On app start, call `getAvailableLanguages()` and fall back to `en-US` if requested locale unavailable. Recommend installing Google TTS engine via Settings prompt if quality is poor. Log TTS engine name for debugging. |
+| R5 | **Foreground Service killed by aggressive OEMs:** Xiaomi MIUI, Samsung OneUI, and Oppo ColorOS aggressively kill background services even with `START_STICKY`. | 🟡 Medium | Use `WakeLock`, proper notification channel, and `START_STICKY`. Add in-app guide: "Disable battery optimization for SkillSetGo POS in Settings → Apps." Test on Xiaomi and Samsung specifically during QA. |
+| R6 | **IndexedDB storage quota on Android WebView:** Android WebView grants ~100-200MB per origin (varies by OS version). A busy restaurant could exceed this in weeks. | 🟡 Medium | Implement auto-archival: closed orders older than 30 days are purged from PouchDB (they persist in CouchDB + PostgreSQL). Run `db.compact()` weekly. Monitor storage via `navigator.storage.estimate()`. |
+| R7 | **PouchDB conflict storms on multi-device busy nights:** Two tablets editing the same order doc simultaneously creates revision branches. | 🟡 Medium | V1 mitigation: granular docs (each order is one doc, but `line_id` dedup prevents item loss). V2 consideration: split to 1 doc per line item for true conflict-free concurrent editing. |
+| R8 | **Google Fonts offline availability:** If fonts are loaded from Google CDN, they fail offline on first visit. | 🟢 Low | Self-host variable font files in `public/fonts/`. Use `@font-face` declarations in `typography.css` instead of CDN `@import`. Already planned in the file layout above. |
+| R9 | **Razorpay webhook delivery failure:** Razorpay retries with exponential backoff, but if the server is down for extended periods, webhooks may be exhausted. | 🟡 Medium | Implement a polling fallback: a cron job runs every 5 minutes, fetches recent Razorpay orders via API, and reconciles against `pg_webhook_events`. |
+| R10 | **Offline bill number collisions across devices:** Two tablets generate `SSG-DEV01-00042` simultaneously if they share a device code. | 🟡 Medium | Each tablet has a unique `DeviceDoc` with its own `device_code` (DEV01, DEV02, etc.) and independent `bill_counter`. Collision is impossible because the prefix differs. Server-side dedup on sync as safety net. |
+
+---
+
+## Verification Plan
+
+### Automated Tests
+
+```bash
+# Shared package — schema validation, GST calc, ULID
+npm run test --workspace=packages/shared
+
+# POS app — PouchDB hooks, conflict resolution, services
+npm run test --workspace=apps/pos
+
+# Backend — webhook handler, state machine, projector
+npm run test --workspace=backend
+
+# Integration — PouchDB ↔ CouchDB sync round-trip
+npm run test:integration --workspace=apps/pos
+
+# E2E — critical user flows (Playwright)
+npm run test:e2e --workspace=apps/pos
+```
+
+### Manual Verification
+
+| Test Case | Method |
+|-----------|--------|
+| Offline billing | Airplane mode → create order → bill → print → reconnect → verify sync to CouchDB + PG |
+| Soundbox conditional trigger | Pay via digital menu → verify NO sound → mark Seated → verify TTS plays |
+| Soundbox offline auto-fire | Pay online → go offline → mark Seated offline → reconnect → verify auto-fire |
+| KOT printing | Connect BT printer → place order → verify KOT prints with correct layout |
+| Conflict resolution | Two tablets add items to same order offline → reconnect → verify merge |
+| GST breakdown | Create order with mixed tax items → verify CGST/SGST breakdown on bill |
+| Digital menu flow | QR scan → browse → cart → Razorpay pay → verify party updated |
+| PWA install | Chrome → Add to Home Screen → offline launch → verify app shell loads |
+| TTS multi-language | Switch TTS to Hindi → trigger payment → verify Hindi announcement |
+| Device registration | Fresh install → assign device code → verify unique bill numbering |

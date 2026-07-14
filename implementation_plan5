@@ -1,0 +1,38 @@
+# Implementation Plan: SaaS Visual Floorplan Setup
+
+This plan details the steps to introduce self-serve outlet configuration capabilities for multi-tenant restaurant owners, completely replacing the developer seeding approach.
+
+## Proposed Changes
+
+### Routing & Navigation
+- **[MODIFY] `apps/pos/src/router.tsx`**: Register the new `/settings` route inside the `ProtectedRoute` wrapper.
+- **[MODIFY] `apps/pos/src/components/layout/AppShell.tsx`**: Add a "Settings" link (⚙️) to the main sidebar navigation menu.
+
+### Settings Hub Page
+- **[NEW] `apps/pos/src/pages/SettingsPage.tsx`**:
+  - Acts as the central hub for Outlet Configuration.
+  - Implements a tabbed interface splitting the view into "Floorplan Setup" and "Menu Catalog Manager" (with the menu catalog tab showing a placeholder for now).
+  - Uses `--font-display` and `--color-primary` brand tokens for a high-end SaaS feel.
+
+### Floorplan Setup Component
+- **[NEW] `apps/pos/src/components/settings/FloorplanSetup.tsx`**:
+  - **Quick Grid Generator (Bulk Action)**:
+    - Inputs for "Total Tables" and "Default Seating Capacity".
+    - A submit button that executes a Firestore `writeBatch` to instantly spawn `N` tables (e.g., T-01, T-02) mapped to the active `outlet_id`.
+  - **Granular Visual Customizer (Live Editor)**:
+    - Connects to Firestore via `onSnapshot` to render all current physical tables.
+    - Each table renders as an editable card containing:
+      - **Name Input**: A text input allowing inline renaming (e.g., from "T-01" to "Patio 1"). Changes fire an `updateDoc` instantly.
+      - **Capacity Counter**: An input or +/- stepper to update physical chairs.
+      - **Delete Action**: A dynamic Trash icon/button that issues a `deleteDoc` request to remove the table from the database permanently.
+  - Because `TablesPage.tsx` (the waiter view) is already hooked up with `onSnapshot`, these changes will reflect in real-time across the app.
+
+## User Review Required
+> [!NOTE]
+> The Quick Grid Generator will sequentially name new tables (e.g., "Table 1", "Table 2") starting from 1. If tables already exist, it will append them sequentially (e.g., starting from the current max table count + 1). Does this auto-increment logic work for you?
+
+## Verification Plan
+1. Generate 5 tables using the bulk tool and verify they appear instantly in the visual customizer.
+2. Inline edit a table's name and capacity, ensuring it saves correctly in Firestore.
+3. Delete a table and ensure it disappears.
+4. Navigate to the Waiter `TablesPage` and confirm that all customizer changes are immediately synced and visible there.

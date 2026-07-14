@@ -1,0 +1,130 @@
+# Architectural Rewrite: Migrate to Firebase Stack
+
+This document outlines the plan to migrate the POS application from a PouchDB/CouchDB/PostgreSQL architecture to a fully native Firebase stack.
+
+## User Review Required
+
+> [!WARNING]
+> **Offline Transaction Limitations:** Firestore does not support offline transactions (`runTransaction`). Offline modifications must rely on standard writes or batched writes, which do not offer the same read-modify-write safety guarantees while offline.
+
+> [!IMPORTANT]
+> **Concurrent Edits (Last-Write-Wins):** To safely handle concurrent offline additions to a single order without losing data due to "last-write-wins", we must change how line items are stored. 
+> **Proposed Mitigation:** Store line items in a Firestore **subcollection** (`orders/{orderId}/line_items/{itemId}`) rather than as an array field inside the `order` document. This allows concurrent additions to sync seamlessly as separate documents.
+
+> [!CAUTION]
+> **Loss of Relational Reporting:** Moving away from PostgreSQL means losing powerful SQL capabilities for complex reporting. Aggregations and joins will require either maintaining separate aggregate documents via Cloud Functions or exporting data to BigQuery.
+
+## Open Questions
+
+1. **Subcollection Schema:** Do you approve changing the schema to use a `line_items` subcollection for orders to resolve concurrent edit conflicts?
+2. **Cache Management:** Should we implement a strategy to clear old/completed orders from the local cache to prevent performance degradation on POS devices over time?
+3. **Analytical Reporting:** Do you need complex reporting immediately? If so, should we include the setup for the Firestore BigQuery Export extension in this migration?
+4. **Data Migration:** Is this a clean slate, or do we need to write scripts to migrate existing data from CouchDB/PostgreSQL to Firestore?
+
+## Proposed Changes
+
+### Monorepo Structure Update
+
+We will restructure the monorepo to align with Firebase tooling and remove deprecated backend services.
+
+#### [NEW] `firebase.json` (at monorepo root)
+- Configure Firebase Hosting for the frontend POS app.
+- Configure Firebase Functions to point to the `/functions` directory.
+- Configure Firestore rules and indexes.
+
+#### [DELETE] `/backend` (or equivalent legacy backend folder)
+- Remove all Node.js Express server code, WebSocket servers, and CouchDB/PostgreSQL projector logic.
+
+#### [NEW] `/functions` (Cloud Functions v2)
+- Initialize a new Firebase Functions environment.
+- Set up endpoints using `firebase-functions/v2/https`.
+
+### 1. Firebase Firestore (Offline-First Refactor)
+
+#### Frontend Firestore Initialization
+We will update the POS app's database initialization logic.
+- Initialize Firestore with multi-tab offline persistence.
+
+```typescript
+import { initializeApp } from "firebase/app";
+import { 
+  initializeFirestore, 
+  persistentLocalCache, 
+  persistentMultipleTabManager 
+} from "firebase/firestore";
+
+const app = initializeApp(firebaseConfig);
+const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({
+    tabManager: persistentMultipleTabManager()
+  })
+});
+```
+
+#### Mitigating "Last-Write-Wins"
+- Refactor order creation and updates to use the `line_items` subcollection.
+- Use `addDoc` to generate unique IDs for each line item added offline. When the device reconnects, these additions will merge without overwriting other cashiers' additions.
+
+### 2. Firebase Cloud Functions (Webhook & Soundbox State)
+
+#### Razorpay Webhook Handler
+- Create an `onRequest` function in `/functions/src/index.ts`.
+- Ensure raw body access for HMAC verification.
+
+```typescript
+import { onRequest } from "firebase-functions/v2/https";
+import * as crypto from "crypto";
+
+export const razorpayWebhook = onRequest((req, res) => {
+  // Use req.rawBody to validate the signature
+  const signature = req.headers["x-razorpay-signature"];
+  const expectedSignature = crypto
+    .createHmac("sha256", process.env.RAZORPAY_WEBHOOK_SECRET!)
+    .update(req.rawBody)
+    .digest("hex");
+
+  if (signature !== expectedSignature) {
+    res.status(400).send("Invalid signature");
+    return;
+  }
+  
+  // Process payment success...
+});
+```
+
+#### Soundbox State Machine
+- Upon successful signature validation and verifying payment status, the Cloud Function will update the relevant `party` document in Firestore.
+- Update payload: `{ payment_received: true }`.
+
+### 3. Capacitor Android App (WebSocket Replacement)
+
+#### Firestore Real-time Listener
+- Remove WebSocket client logic.
+- Implement a real-time listener (`onSnapshot`) on the specific `party` document associated with the current session.
+
+```typescript
+import { doc, onSnapshot } from "firebase/firestore";
+
+// Listen to the party document
+const unsub = onSnapshot(doc(db, "parties", partyId), (doc) => {
+  const data = doc.data();
+  if (data?.payment_received === true && data?.status === "seated") {
+    // Trigger native Android TTS engine via Capacitor plugin
+    TextToSpeech.speak({
+      text: "Payment received successfully",
+      // options...
+    });
+  }
+});
+```
+
+## Verification Plan
+
+### Automated Tests
+- Run Firebase Local Emulator Suite to test Firestore security rules.
+- Run Cloud Functions emulator to mock Razorpay webhook payloads and verify HMAC validation and Firestore document updates.
+
+### Manual Verification
+- **Offline Mode:** Disconnect the network on two POS instances, add line items to the same order simultaneously, reconnect, and verify both items are present in the order without data loss.
+- **Multi-tab:** Open the POS in two browser tabs, add an item in one, and verify it appears in the other instantly via local cache without network requests.
+- **Soundbox Flow:** Trigger a mock Razorpay webhook locally, verify the Cloud Function updates the `party` document, and verify the Capacitor app detects the `onSnapshot` change and triggers the TTS plugin.
