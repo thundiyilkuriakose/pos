@@ -4,6 +4,7 @@
 // ════════════════════════════════════════════
 
 import { initializeApp, getApps, getApp, type FirebaseApp } from "firebase/app";
+import { getAuth, type Auth } from "firebase/auth";
 import {
   getFirestore,
   initializeFirestore,
@@ -24,6 +25,9 @@ const firebaseConfig = {
 // Singleton App Initialization
 const app: FirebaseApp = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
+// Firebase Auth Instance
+const auth: Auth = getAuth(app);
+
 // HMR Safe Firestore Cache Initialization
 let db: Firestore;
 try {
@@ -36,4 +40,4 @@ try {
   db = getFirestore(app);
 }
 
-export { app, db };
+export { app, db, auth };

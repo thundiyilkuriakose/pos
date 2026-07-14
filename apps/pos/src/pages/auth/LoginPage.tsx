@@ -1,25 +1,50 @@
-import React, { useState } from 'react';
+import { useState, type FormEvent } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { signInWithEmailAndPassword } from 'firebase/auth';
+import { auth } from '../../lib/firebase';
 import { useAuthStore } from '../../stores/auth.store.ts';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
   
   const login = useAuthStore((state) => state.login);
   const navigate = useNavigate();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    setError('');
     if (!email || !password) {
       setError('Please fill in all fields.');
       return;
     }
     
-    // Simulate authentication
-    login(email, 'manager');
-    navigate('/dashboard');
+    setLoading(true);
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
+      login(user.email || email, 'manager');
+      navigate('/dashboard');
+    } catch (err: any) {
+      console.error('Firebase Auth Error:', err);
+      let message = 'Invalid email or password.';
+      if (
+        err.code === 'auth/user-not-found' ||
+        err.code === 'auth/wrong-password' ||
+        err.code === 'auth/invalid-credential'
+      ) {
+        message = 'Invalid email or password.';
+      } else if (err.code === 'auth/too-many-requests') {
+        message = 'Access temporarily disabled due to too many failed attempts. Please try again later.';
+      } else if (err.message) {
+        message = err.message;
+      }
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -57,8 +82,8 @@ export default function LoginPage() {
           />
         </div>
 
-        <button type="submit" style={styles.submitBtn}>
-          Sign In
+        <button type="submit" disabled={loading} style={styles.submitBtn}>
+          {loading ? 'Authenticating...' : 'Sign In'}
         </button>
       </form>
 
