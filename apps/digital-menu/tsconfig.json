@@ -4,6 +4,5 @@
     "composite": true,
     "types": ["node", "vite/client"]
   },
-  "include": ["src/**/*", "../../packages/shared/src/**/*", "../../apps/digital-menu/src/**/*"]
+  "include": ["src/**/*", "../../packages/shared/src/**/*"]
 }
-

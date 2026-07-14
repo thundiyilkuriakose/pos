@@ -1,4 +1,3 @@
-import React from 'react';
 import { createHashRouter } from 'react-router-dom';
 
 // Layouts

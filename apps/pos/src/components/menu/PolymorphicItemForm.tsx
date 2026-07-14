@@ -36,13 +36,13 @@ export default function PolymorphicItemForm({
   const [itemKind, setItemKind] = useState<'simple' | 'recipe' | 'variant_parent'>('simple');
   const [basePriceRupees, setBasePriceRupees] = useState('');
   const [isInclusive, setIsInclusive] = useState(false);
-  const [isAvailable, setIsAvailable] = useState(true);
+  const [isAvailable] = useState(true);
 
   // Simple Item Dynamic Fields
   const [sku, setSku] = useState('');
   const [currentStock, setCurrentStock] = useState('50');
   const [stockUnit, setStockUnit] = useState<'pcs' | 'kg' | 'litre' | 'ml' | 'g'>('pcs');
-  const [lowStockAlert, setLowStockAlert] = useState('5');
+  const [lowStockAlert] = useState('5');
 
   // Recipe Item Dynamic Fields
   const [ingredients, setIngredients] = useState<IngredientRow[]>([

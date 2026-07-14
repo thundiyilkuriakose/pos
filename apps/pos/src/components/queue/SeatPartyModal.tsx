@@ -7,8 +7,6 @@ import React, { useEffect, useState } from 'react';
 import {
   collection,
   getDocs,
-  query,
-  where,
   writeBatch,
   doc,
   serverTimestamp,

@@ -3,7 +3,7 @@
 //  File: apps/digital-menu/src/App.tsx
 // ════════════════════════════════════════════
 
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { collection, onSnapshot, query, where, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from './lib/firebase.ts';
 import { formatPaiseToRupees } from '@skillsetgo/shared';

@@ -4,7 +4,7 @@
 // ════════════════════════════════════════════
 
 import React, { useState, useEffect } from 'react';
-import { collection, query, where, getDocs, doc, onSnapshot, updateRef, updateDoc, writeBatch } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, onSnapshot, updateDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { formatPaiseToRupees } from '@skillsetgo/shared';
 
@@ -68,7 +68,7 @@ export default function OrderPanel({
   
   const [party, setParty] = useState<PartyDoc | null>(null);
   const [cart, setCart] = useState<LineItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [, setLoading] = useState(true);
   
   const [variantModalOpen, setVariantModalOpen] = useState(false);
   const [selectedParentItem, setSelectedParentItem] = useState<MenuItem | null>(null);
