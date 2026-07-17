@@ -1,30 +1,33 @@
 import React, { useState, type FormEvent } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { createUserWithEmailAndPassword, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
-import { auth } from '../../lib/firebase';
+import { createUserWithEmailAndPassword, fetchSignInMethodsForEmail, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { auth, db } from '../../lib/firebase';
 import { useAuthStore } from '../../stores/auth.store.ts';
 
 export default function SignupPage() {
-  // Wizard step state (1, 2, 3) and animation direction ('next' | 'prev')
+  // Wizard step state (1 or 2) and animation direction ('next' | 'prev')
   const [step, setStep] = useState(1);
   const [direction, setDirection] = useState<'next' | 'prev'>('next');
   const [animating, setAnimating] = useState(false);
 
-  // Form fields state
+  // Step 1: Form fields state
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [termsAgreed, setTermsAgreed] = useState(false);
 
+  // Step 2: Form fields state (Indian market localization)
   const [businessName, setBusinessName] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
-  const [outletType, setOutletType] = useState('QSR');
+  const [outletType, setOutletType] = useState('Quick Service / Fast Food (Burgers, Pizza, etc.)');
+  const [currency, setCurrency] = useState('INR (₹) - Indian Rupee');
 
-  const [tableCount, setTableCount] = useState<number | string>(10);
-  const [currency, setCurrency] = useState('USD ($)');
-
-  // Form submission state
+  // Form submission & error states
   const [error, setError] = useState('');
+  const [emailAlreadyExists, setEmailAlreadyExists] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [checkingEmail, setCheckingEmail] = useState(false);
 
   const login = useAuthStore((state) => state.login);
   const navigate = useNavigate();
@@ -33,7 +36,6 @@ export default function SignupPage() {
   const isEmailValid = /\S+@\S+\.\S+/.test(email);
   const isPasswordValid = password.length >= 6;
   const isBusinessNameValid = businessName.trim().length >= 2;
-  const isPhoneValid = phoneNumber.trim().length >= 7;
 
   // Password Strength Calculation (0 to 100)
   const getPasswordStrength = (pass: string) => {
@@ -53,31 +55,79 @@ export default function SignupPage() {
 
   const pwdStrength = getPasswordStrength(password);
 
-  // Step Navigation Handlers with Animation Direction
-  const goToStep = (nextStep: number) => {
-    if (nextStep === step || animating) return;
-    setDirection(nextStep > step ? 'next' : 'prev');
+  // Step 1 to Step 2 Transition with Early Email Existence Check
+  const handleProceedToStep2 = async () => {
+    if (!isEmailValid || !isPasswordValid || !termsAgreed || checkingEmail) return;
+
+    setError('');
+    setEmailAlreadyExists(false);
+    setCheckingEmail(true);
+
+    try {
+      // Query Firebase Auth to check if email already exists
+      const signInMethods = await fetchSignInMethodsForEmail(auth, email);
+      if (signInMethods && signInMethods.length > 0) {
+        setEmailAlreadyExists(true);
+        setCheckingEmail(false);
+        return;
+      }
+    } catch (err: any) {
+      // If Firebase email enumeration protection is enabled or throws auth/email-already-in-use
+      if (err.code === 'auth/email-already-in-use') {
+        setEmailAlreadyExists(true);
+        setCheckingEmail(false);
+        return;
+      }
+      console.warn('Email existence check skipped or failed:', err);
+    } finally {
+      setCheckingEmail(false);
+    }
+
+    // Proceed to Step 2 with slide animation
+    setDirection('next');
     setAnimating(true);
-    setStep(nextStep);
+    setStep(2);
+    setTimeout(() => setAnimating(false), 300);
+  };
+
+  // Back to Step 1 Transition
+  const handleBackToStep1 = () => {
+    if (animating) return;
+    setDirection('prev');
+    setAnimating(true);
+    setStep(1);
     setTimeout(() => setAnimating(false), 300);
   };
 
   // Google SSO Handler
   const handleGoogleSSO = async () => {
     setError('');
+    setEmailAlreadyExists(false);
     setLoading(true);
     try {
       const provider = new GoogleAuthProvider();
       const userCredential = await signInWithPopup(auth, provider);
       const user = userCredential.user;
+
+      // Save user details to Firestore
+      await setDoc(doc(db, 'users', user.uid), {
+        uid: user.uid,
+        email: user.email,
+        name: user.displayName || user.email?.split('@')[0],
+        role: 'owner',
+        createdAt: serverTimestamp(),
+      }, { merge: true });
+
       login(user.email || 'google_user@pos.com', 'owner');
       navigate('/dashboard');
     } catch (err: any) {
-      console.warn('Google SSO failed or cancelled, falling back to mock SSO notice:', err);
-      // Fallback for environment without live Google OAuth credentials configured in Firebase
+      console.warn('Google SSO failed or cancelled:', err);
       if (err.code === 'auth/popup-closed-by-user' || err.code === 'auth/cancelled-popup-request') {
         setError('Google sign-in popup was closed.');
+      } else if (err.code === 'auth/email-already-in-use') {
+        setEmailAlreadyExists(true);
       } else {
+        // Fallback for demo environment
         login(email || 'sso_owner@restaurant.com', 'owner');
         navigate('/dashboard');
       }
@@ -86,12 +136,13 @@ export default function SignupPage() {
     }
   };
 
-  // Final Form Submission Handler
+  // Final Form Submission Handler (Step 2 Submission)
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError('');
+    setEmailAlreadyExists(false);
 
-    if (step !== 3) return;
+    if (step !== 2) return;
 
     if (!email || !password || !businessName) {
       setError('Please fill in all required fields.');
@@ -100,36 +151,60 @@ export default function SignupPage() {
 
     setLoading(true);
     try {
+      // 1. Create Firebase Auth user
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
+
+      // 2. Persist user & business details to Firestore
+      const outletId = 'OUT001';
+      await Promise.all([
+        setDoc(doc(db, 'users', user.uid), {
+          uid: user.uid,
+          email: user.email,
+          businessName,
+          phoneNumber: phoneNumber || null,
+          outletType,
+          currency,
+          role: 'owner',
+          createdAt: serverTimestamp(),
+        }),
+        setDoc(doc(db, 'outlets', outletId), {
+          id: outletId,
+          name: businessName,
+          phoneNumber: phoneNumber || null,
+          outletType,
+          currency,
+          ownerUid: user.uid,
+          updatedAt: serverTimestamp(),
+        }, { merge: true }),
+      ]);
+
+      // 3. Update auth store & navigate to dashboard
       login(user.email || email, 'owner');
       navigate('/dashboard');
     } catch (err: any) {
       console.error('Firebase Signup Error:', err);
-      let message = 'Failed to create account. Please try again.';
       if (err.code === 'auth/email-already-in-use') {
-        message = 'This email address is already registered.';
-        setStep(1);
+        setEmailAlreadyExists(true);
+        setStep(1); // Route user back to Step 1 with inline warning
       } else if (err.code === 'auth/invalid-email') {
-        message = 'The email address is invalid.';
+        setError('The email address is invalid.');
         setStep(1);
       } else if (err.code === 'auth/weak-password') {
-        message = 'Password should be at least 6 characters.';
+        setError('Password should be at least 6 characters.');
         setStep(1);
       } else if (err.code === 'auth/too-many-requests') {
-        message = 'Access temporarily disabled due to too many attempts. Please try again later.';
-      } else if (err.message) {
-        message = err.message;
+        setError('Access temporarily disabled due to too many attempts. Please try again later.');
+      } else {
+        setError(err.message || 'Failed to create account. Please try again.');
       }
-      setError(message);
     } finally {
       setLoading(false);
     }
   };
 
-  // Validation state checks per step
   const isStep1Valid = isEmailValid && isPasswordValid && termsAgreed;
-  const isStep2Valid = isBusinessNameValid && isPhoneValid;
+  const isStep2Valid = isBusinessNameValid;
 
   return (
     <div style={styles.container}>
@@ -155,7 +230,7 @@ export default function SignupPage() {
         }
       `}</style>
 
-      {/* Wizard Header / Progress Indicator */}
+      {/* 2-Step Progress Indicator Header */}
       <div style={styles.wizardHeader}>
         <div style={styles.stepIndicatorRow}>
           <div
@@ -175,26 +250,32 @@ export default function SignupPage() {
           >
             2
           </div>
-          <div style={{ ...styles.stepConnector, ...(step >= 3 ? styles.stepConnectorActive : {}) }} />
-          <div
-            style={{
-              ...styles.stepBadge,
-              ...(step >= 3 ? styles.stepBadgeActive : {}),
-            }}
-          >
-            3
-          </div>
         </div>
         <div style={styles.stepLabelsRow}>
-          <span style={{ ...styles.stepLabel, ...(step === 1 ? styles.stepLabelActive : {}) }}>Account</span>
-          <span style={{ ...styles.stepLabel, ...(step === 2 ? styles.stepLabelActive : {}) }}>Business</span>
-          <span style={{ ...styles.stepLabel, ...(step === 3 ? styles.stepLabelActive : {}) }}>Setup</span>
+          <span style={{ ...styles.stepLabel, ...(step === 1 ? styles.stepLabelActive : {}) }}>Account Creation</span>
+          <span style={{ ...styles.stepLabel, ...(step === 2 ? styles.stepLabelActive : {}) }}>Business &amp; Local</span>
         </div>
       </div>
 
+      {/* Standard Error Banner */}
       {error && <div style={styles.errorBanner}>{error}</div>}
 
-      {/* Main Wizard Form Container with Overflow Hidden for Sliding */}
+      {/* CRITICAL: Email Already Registered Inline Warning */}
+      {emailAlreadyExists && (
+        <div style={styles.alreadyExistsBanner}>
+          <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0 }}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <div>
+            This email is already registered.{' '}
+            <Link to="/login" style={styles.alreadyExistsLink}>
+              Please log in instead.
+            </Link>
+          </div>
+        </div>
+      )}
+
+      {/* Main Wizard Form Container */}
       <div style={styles.stepViewport}>
         <form onSubmit={handleSubmit} style={styles.formContainer}>
           {/* STEP 1: ACCOUNT CREATION */}
@@ -210,7 +291,7 @@ export default function SignupPage() {
                 disabled={loading}
                 style={styles.googleBtn}
               >
-                <svg width="18" height="18" viewBox="0 0 24 24" style={{ marginRight: '8px' }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" style={{ marginRight: '8px', flexShrink: 0 }}>
                   <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
                   <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
                   <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
@@ -237,13 +318,19 @@ export default function SignupPage() {
                     type="email"
                     className="input-with-icon"
                     value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    onChange={(e) => {
+                      setEmail(e.target.value);
+                      setEmailAlreadyExists(false);
+                    }}
                     placeholder="owner@gourmetbistro.com"
-                    style={styles.input}
+                    style={{
+                      ...styles.input,
+                      ...(emailAlreadyExists ? styles.inputErrorBorder : {}),
+                    }}
                     required
                   />
                   {/* Live Validation Checkmark */}
-                  {isEmailValid && (
+                  {isEmailValid && !emailAlreadyExists && (
                     <svg style={styles.rightCheckmark} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="2.5">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                     </svg>
@@ -251,7 +338,7 @@ export default function SignupPage() {
                 </div>
               </div>
 
-              {/* Password Input */}
+              {/* Password Input with Eye Visibility Toggle Button */}
               <div style={styles.inputGroup}>
                 <label style={styles.label}>Password</label>
                 <div style={styles.inputWrapper}>
@@ -260,17 +347,42 @@ export default function SignupPage() {
                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                   </svg>
                   <input
-                    type="password"
+                    type={showPassword ? 'text' : 'password'}
                     className="input-with-icon"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="Create a strong password"
-                    style={styles.input}
+                    style={{
+                      ...styles.input,
+                      paddingRight: '64px', // Space for both eye button & checkmark
+                    }}
                     required
                   />
+
+                  {/* Eye Toggle Button */}
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    style={styles.eyeToggleBtn}
+                    title={showPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showPassword ? (
+                      /* Eye Off Icon */
+                      <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.88 9.88a3 3 0 104.24 4.24M1 1l22 22" />
+                      </svg>
+                    ) : (
+                      /* Eye Icon */
+                      <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                    )}
+                  </button>
+
                   {/* Live Validation Checkmark */}
                   {isPasswordValid && (
-                    <svg style={styles.rightCheckmark} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="2.5">
+                    <svg style={styles.rightCheckmarkOffset} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="2.5">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                     </svg>
                   )}
@@ -313,26 +425,26 @@ export default function SignupPage() {
                 </span>
               </label>
 
-              {/* Next Step Button */}
+              {/* Next Step Button (Triggers Early Email Existence Check) */}
               <button
                 type="button"
-                disabled={!isStep1Valid}
-                onClick={() => goToStep(2)}
+                disabled={!isStep1Valid || checkingEmail}
+                onClick={handleProceedToStep2}
                 style={{
                   ...styles.submitBtn,
-                  ...(!isStep1Valid ? styles.btnDisabled : {}),
+                  ...(!isStep1Valid || checkingEmail ? styles.btnDisabled : {}),
                 }}
               >
-                Next: Business Details →
+                {checkingEmail ? 'Verifying Email...' : 'Next: Business Details →'}
               </button>
             </div>
           )}
 
-          {/* STEP 2: BUSINESS DETAILS */}
+          {/* STEP 2: BUSINESS & LOCAL DETAILS */}
           {step === 2 && (
             <div key="step-2" className={direction === 'next' ? 'slide-next' : 'slide-prev'} style={styles.stepContent}>
-              <h2 style={styles.title}>Business Details</h2>
-              <p style={styles.subtitle}>Tell us about your restaurant outlet.</p>
+              <h2 style={styles.title}>Business &amp; Local Details</h2>
+              <p style={styles.subtitle}>Provide your outlet information for Indian operations.</p>
 
               {/* Business Name Input */}
               <div style={styles.inputGroup}>
@@ -347,7 +459,7 @@ export default function SignupPage() {
                     className="input-with-icon"
                     value={businessName}
                     onChange={(e) => setBusinessName(e.target.value)}
-                    placeholder="Gourmet Bistro Ltd"
+                    placeholder="Royal Punjab Dhaba &amp; Restro"
                     style={styles.input}
                     required
                   />
@@ -359,9 +471,9 @@ export default function SignupPage() {
                 </div>
               </div>
 
-              {/* Phone Number Input */}
+              {/* Phone Number Input (Optional with Exact Placeholder) */}
               <div style={styles.inputGroup}>
-                <label style={styles.label}>Phone Number</label>
+                <label style={styles.label}>Phone Number <span style={styles.optionalTag}>(Optional)</span></label>
                 <div style={styles.inputWrapper}>
                   {/* Left Phone Icon */}
                   <svg style={styles.leftIcon} width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
@@ -372,11 +484,10 @@ export default function SignupPage() {
                     className="input-with-icon"
                     value={phoneNumber}
                     onChange={(e) => setPhoneNumber(e.target.value)}
-                    placeholder="+1 (555) 234-5678"
+                    placeholder="+91 99999 99999"
                     style={styles.input}
-                    required
                   />
-                  {isPhoneValid && (
+                  {phoneNumber.trim().length >= 7 && (
                     <svg style={styles.rightCheckmark} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="2.5">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                     </svg>
@@ -384,7 +495,7 @@ export default function SignupPage() {
                 </div>
               </div>
 
-              {/* Outlet Type Dropdown */}
+              {/* Outlet Type Dropdown (Exact Indian Market Localized List) */}
               <div style={styles.inputGroup}>
                 <label style={styles.label}>Outlet Type</label>
                 <div style={styles.inputWrapper}>
@@ -393,76 +504,20 @@ export default function SignupPage() {
                     onChange={(e) => setOutletType(e.target.value)}
                     style={styles.selectInput}
                   >
-                    <option value="QSR">QSR (Quick Service Restaurant)</option>
+                    <option value="Quick Service / Fast Food (Burgers, Pizza, etc.)">Quick Service / Fast Food (Burgers, Pizza, etc.)</option>
+                    <option value="Food Kiosk / Chaat Counter">Food Kiosk / Chaat Counter</option>
+                    <option value="Family Restaurant (Casual Dining)">Family Restaurant (Casual Dining)</option>
+                    <option value="Cafe / Bakery">Cafe / Bakery</option>
+                    <option value="Cloud Kitchen / Delivery Only">Cloud Kitchen / Delivery Only</option>
+                    <option value="Sweet Shop / Mithaiwala">Sweet Shop / Mithaiwala</option>
+                    <option value="Dhaba">Dhaba</option>
                     <option value="Fine Dining">Fine Dining</option>
-                    <option value="Cafe">Cafe / Coffee Shop</option>
-                    <option value="Food Truck">Food Truck</option>
-                    <option value="Fast Casual">Fast Casual</option>
-                    <option value="Bakery">Bakery / Confectionery</option>
-                    <option value="Bar & Lounge">Bar & Lounge</option>
+                    <option value="Bar & Lounge">Bar &amp; Lounge</option>
                   </select>
                 </div>
               </div>
 
-              {/* Actions Row */}
-              <div style={styles.btnRow}>
-                <button
-                  type="button"
-                  onClick={() => goToStep(1)}
-                  style={styles.secondaryBtn}
-                >
-                  ← Back
-                </button>
-                <button
-                  type="button"
-                  disabled={!isStep2Valid}
-                  onClick={() => goToStep(3)}
-                  style={{
-                    ...styles.submitBtn,
-                    flex: 1,
-                    ...(!isStep2Valid ? styles.btnDisabled : {}),
-                  }}
-                >
-                  Next: Setup →
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* STEP 3: QUICK CONFIGURATION */}
-          {step === 3 && (
-            <div key="step-3" className={direction === 'next' ? 'slide-next' : 'slide-prev'} style={styles.stepContent}>
-              <h2 style={styles.title}>Quick Configuration</h2>
-              <p style={styles.subtitle}>Set up initial POS settings.</p>
-
-              {/* Number of Tables Input */}
-              <div style={styles.inputGroup}>
-                <label style={styles.label}>Number of Tables</label>
-                <div style={styles.inputWrapper}>
-                  {/* Left Grid/Table Icon */}
-                  <svg style={styles.leftIcon} width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-                  </svg>
-                  <input
-                    type="number"
-                    min="1"
-                    max="500"
-                    className="input-with-icon"
-                    value={tableCount}
-                    onChange={(e) => setTableCount(e.target.value)}
-                    placeholder="10"
-                    style={styles.input}
-                    required
-                  />
-                  {Number(tableCount) > 0 && (
-                    <svg style={styles.rightCheckmark} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="2.5">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                    </svg>
-                  )}
-                </div>
-              </div>
-
-              {/* Primary Currency Dropdown */}
+              {/* Primary Currency Dropdown (Defaulted to INR) */}
               <div style={styles.inputGroup}>
                 <label style={styles.label}>Primary Currency</label>
                 <div style={styles.inputWrapper}>
@@ -471,14 +526,12 @@ export default function SignupPage() {
                     onChange={(e) => setCurrency(e.target.value)}
                     style={styles.selectInput}
                   >
-                    <option value="USD ($)">USD ($) - US Dollar</option>
-                    <option value="EUR (€)">EUR (€) - Euro</option>
-                    <option value="GBP (£)">GBP (£) - British Pound</option>
-                    <option value="INR (₹)">INR (₹) - Indian Rupee</option>
-                    <option value="AUD ($)">AUD ($) - Australian Dollar</option>
-                    <option value="CAD ($)">CAD ($) - Canadian Dollar</option>
-                    <option value="SGD ($)">SGD ($) - Singapore Dollar</option>
-                    <option value="AED (د.إ)">AED (د.إ) - UAE Dirham</option>
+                    <option value="INR (₹) - Indian Rupee">INR (₹) - Indian Rupee</option>
+                    <option value="USD ($) - US Dollar">USD ($) - US Dollar</option>
+                    <option value="EUR (€) - Euro">EUR (€) - Euro</option>
+                    <option value="GBP (£) - British Pound">GBP (£) - British Pound</option>
+                    <option value="AED (د.إ) - UAE Dirham">AED (د.إ) - UAE Dirham</option>
+                    <option value="SGD ($) - Singapore Dollar">SGD ($) - Singapore Dollar</option>
                   </select>
                 </div>
               </div>
@@ -487,17 +540,18 @@ export default function SignupPage() {
               <div style={styles.btnRow}>
                 <button
                   type="button"
-                  onClick={() => goToStep(2)}
+                  onClick={handleBackToStep1}
                   style={styles.secondaryBtn}
                 >
                   ← Back
                 </button>
                 <button
                   type="submit"
-                  disabled={loading}
+                  disabled={!isStep2Valid || loading}
                   style={{
                     ...styles.submitBtn,
                     flex: 1,
+                    ...(!isStep2Valid || loading ? styles.btnDisabled : {}),
                   }}
                 >
                   {loading ? 'Creating Account...' : 'Complete Registration'}
@@ -555,7 +609,7 @@ const styles: Record<string, React.CSSProperties> = {
   stepConnector: {
     flex: 1,
     height: '2px',
-    maxWidth: '40px',
+    maxWidth: '80px',
     backgroundColor: '#E5E7EB',
     transition: 'all 0.25s ease',
   },
@@ -565,8 +619,8 @@ const styles: Record<string, React.CSSProperties> = {
   stepLabelsRow: {
     display: 'flex',
     justifyContent: 'space-between',
-    paddingLeft: '6px',
-    paddingRight: '6px',
+    paddingLeft: '12px',
+    paddingRight: '12px',
   },
   stepLabel: {
     fontSize: '11px',
@@ -597,6 +651,26 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 'var(--radius-sm, 6px)',
     fontSize: '13px',
     marginBottom: '12px',
+  },
+  alreadyExistsBanner: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    backgroundColor: '#FEF2F2',
+    color: '#991B1B',
+    border: '1px solid #FCA5A5',
+    padding: '10px 14px',
+    borderRadius: 'var(--radius-md, 8px)',
+    fontSize: '13px',
+    fontWeight: 600,
+    marginBottom: '14px',
+    boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+  },
+  alreadyExistsLink: {
+    color: 'var(--color-primary, #611701)',
+    textDecoration: 'underline',
+    fontWeight: 700,
+    marginLeft: '4px',
   },
   stepViewport: {
     overflow: 'hidden',
@@ -656,6 +730,12 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     color: 'var(--color-text, #374151)',
   },
+  optionalTag: {
+    fontSize: '11px',
+    fontWeight: 400,
+    color: '#9CA3AF',
+    marginLeft: '4px',
+  },
   inputWrapper: {
     position: 'relative',
     display: 'flex',
@@ -672,6 +752,25 @@ const styles: Record<string, React.CSSProperties> = {
     right: '12px',
     pointerEvents: 'none',
   },
+  rightCheckmarkOffset: {
+    position: 'absolute',
+    right: '40px',
+    pointerEvents: 'none',
+  },
+  eyeToggleBtn: {
+    position: 'absolute',
+    right: '10px',
+    background: 'none',
+    border: 'none',
+    padding: '4px',
+    color: '#6B7280',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '4px',
+    transition: 'color 0.2s ease',
+  },
   input: {
     width: '100%',
     fontSize: '14px',
@@ -683,6 +782,10 @@ const styles: Record<string, React.CSSProperties> = {
     backgroundColor: '#FFFFFF',
     transition: 'all 0.2s ease',
     boxSizing: 'border-box',
+  },
+  inputErrorBorder: {
+    borderColor: '#EF4444',
+    backgroundColor: '#FEF2F2',
   },
   selectInput: {
     width: '100%',
