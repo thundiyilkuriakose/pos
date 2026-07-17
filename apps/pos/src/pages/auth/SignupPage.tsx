@@ -25,6 +25,7 @@ export default function SignupPage() {
   const [termsAgreed, setTermsAgreed] = useState(false);
   const [captchaVerified, setCaptchaVerified] = useState(false);
   const [captchaLoading, setCaptchaLoading] = useState(false);
+  const [isGrecaptchaRendered, setIsGrecaptchaRendered] = useState(false);
 
   // Step 2: Form fields state (Indian market localization)
   const [businessName, setBusinessName] = useState('');
@@ -41,15 +42,43 @@ export default function SignupPage() {
   const login = useAuthStore((state) => state.login);
   const navigate = useNavigate();
   const recaptchaContainerRef = useRef<HTMLDivElement>(null);
+  const widgetIdRef = useRef<number | null>(null);
 
   // Field Validation Helpers
   const isEmailValid = /\S+@\S+\.\S+/.test(email);
   const isPasswordValid = password.length >= 6;
   const isBusinessNameValid = businessName.trim().length >= 2;
 
-  // Dynamic Google reCAPTCHA v2 Integration
+  // Dynamic Google reCAPTCHA v2 Integration with Strict Double-Mount Cleanup Guard
   useEffect(() => {
     if (step !== 1) return;
+
+    let intervalId: any;
+
+    const renderRecaptcha = () => {
+      if (
+        (window as any).grecaptcha &&
+        (window as any).grecaptcha.render &&
+        recaptchaContainerRef.current &&
+        widgetIdRef.current === null
+      ) {
+        try {
+          if (!recaptchaContainerRef.current.hasChildNodes()) {
+            const widgetId = (window as any).grecaptcha.render(recaptchaContainerRef.current, {
+              sitekey: RECAPTCHA_SITE_KEY,
+              callback: (response: string) => {
+                if (response) setCaptchaVerified(true);
+              },
+              'expired-callback': () => setCaptchaVerified(false),
+            });
+            widgetIdRef.current = widgetId;
+            setIsGrecaptchaRendered(true);
+          }
+        } catch (e) {
+          // Render error or duplicate prevention caught gracefully
+        }
+      }
+    };
 
     // Load official Google reCAPTCHA v2 script dynamically if not present
     const existingScript = document.getElementById('recaptcha-v2-script');
@@ -59,38 +88,36 @@ export default function SignupPage() {
       script.src = 'https://www.google.com/recaptcha/api.js?render=explicit';
       script.async = true;
       script.defer = true;
+      script.onload = () => renderRecaptcha();
       document.body.appendChild(script);
+    } else {
+      renderRecaptcha();
     }
 
-    const renderRecaptcha = () => {
-      if ((window as any).grecaptcha && (window as any).grecaptcha.render && recaptchaContainerRef.current) {
-        try {
-          if (!recaptchaContainerRef.current.hasChildNodes()) {
-            (window as any).grecaptcha.render(recaptchaContainerRef.current, {
-              sitekey: RECAPTCHA_SITE_KEY,
-              callback: (response: string) => {
-                if (response) setCaptchaVerified(true);
-              },
-              'expired-callback': () => setCaptchaVerified(false),
-            });
-          }
-        } catch (e) {
-          // Fallback or re-render prevention handled gracefully
-        }
+    intervalId = setInterval(() => {
+      if (widgetIdRef.current !== null) {
+        clearInterval(intervalId);
+        return;
       }
-    };
-
-    const interval = setInterval(() => {
-      if ((window as any).grecaptcha && (window as any).grecaptcha.render) {
-        renderRecaptcha();
-        clearInterval(interval);
-      }
+      renderRecaptcha();
     }, 300);
 
-    return () => clearInterval(interval);
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+      if (widgetIdRef.current !== null && (window as any).grecaptcha?.reset) {
+        try {
+          (window as any).grecaptcha.reset(widgetIdRef.current);
+        } catch (e) {}
+        widgetIdRef.current = null;
+      }
+      if (recaptchaContainerRef.current) {
+        recaptchaContainerRef.current.innerHTML = '';
+      }
+      setIsGrecaptchaRendered(false);
+    };
   }, [step]);
 
-  // Manual CAPTCHA Checkbox Toggle Handler (Fallback for offline/test key environment)
+  // Manual CAPTCHA Checkbox Toggle Handler (Fallback when official script cannot load)
   const handleToggleCaptcha = () => {
     if (captchaVerified) {
       setCaptchaVerified(false);
@@ -497,47 +524,50 @@ export default function SignupPage() {
                 </span>
               </label>
 
-              {/* Standard Visible Google reCAPTCHA v2 Checkbox Widget */}
+              {/* Single reCAPTCHA Widget Section */}
               <div style={styles.recaptchaSection}>
+                {/* Official Google reCAPTCHA v2 Container */}
                 <div ref={recaptchaContainerRef} />
 
-                {/* Interactive reCAPTCHA Box (Renders when API script is loading or test key environment) */}
-                <div style={styles.recaptchaBox}>
-                  <div style={styles.recaptchaLeft}>
-                    <button
-                      type="button"
-                      onClick={handleToggleCaptcha}
-                      style={{
-                        ...styles.recaptchaCheckbox,
-                        ...(captchaVerified ? styles.recaptchaCheckboxChecked : {}),
-                      }}
-                      aria-label="I'm not a robot"
-                    >
-                      {captchaLoading ? (
-                        <div className="captcha-spinner" style={styles.captchaSpinnerDot} />
-                      ) : captchaVerified ? (
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="3">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                        </svg>
-                      ) : null}
-                    </button>
-                    <span onClick={handleToggleCaptcha} style={styles.recaptchaText}>
-                      I'm not a robot
-                    </span>
-                  </div>
+                {/* Fallback reCAPTCHA Box - ONLY rendered if official Google widget has NOT rendered */}
+                {!isGrecaptchaRendered && (
+                  <div style={styles.recaptchaBox}>
+                    <div style={styles.recaptchaLeft}>
+                      <button
+                        type="button"
+                        onClick={handleToggleCaptcha}
+                        style={{
+                          ...styles.recaptchaCheckbox,
+                          ...(captchaVerified ? styles.recaptchaCheckboxChecked : {}),
+                        }}
+                        aria-label="I'm not a robot"
+                      >
+                        {captchaLoading ? (
+                          <div className="captcha-spinner" style={styles.captchaSpinnerDot} />
+                        ) : captchaVerified ? (
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="3">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                          </svg>
+                        ) : null}
+                      </button>
+                      <span onClick={handleToggleCaptcha} style={styles.recaptchaText}>
+                        I'm not a robot
+                      </span>
+                    </div>
 
-                  <div style={styles.recaptchaRight}>
-                    <svg width="26" height="26" viewBox="0 0 24 24" fill="#4285F4">
-                      <path d="M12 2A10 10 0 0 0 2 12a10 10 0 0 0 10 10 10 10 0 0 0 10-10A10 10 0 0 0 12 2zm1 14.5h-2v-2h2v2zm0-4h-2V7h2v5.5z" />
-                    </svg>
-                    <span style={styles.recaptchaBrand}>reCAPTCHA</span>
-                    <div style={styles.recaptchaLegal}>
-                      <a href="https://policies.google.com/privacy" target="_blank" rel="noreferrer" style={styles.recaptchaLink}>Privacy</a>
-                      <span style={{ margin: '0 2px' }}>·</span>
-                      <a href="https://policies.google.com/terms" target="_blank" rel="noreferrer" style={styles.recaptchaLink}>Terms</a>
+                    <div style={styles.recaptchaRight}>
+                      <svg width="26" height="26" viewBox="0 0 24 24" fill="#4285F4">
+                        <path d="M12 2A10 10 0 0 0 2 12a10 10 0 0 0 10 10 10 10 0 0 0 10-10A10 10 0 0 0 12 2zm1 14.5h-2v-2h2v2zm0-4h-2V7h2v5.5z" />
+                      </svg>
+                      <span style={styles.recaptchaBrand}>reCAPTCHA</span>
+                      <div style={styles.recaptchaLegal}>
+                        <a href="https://policies.google.com/privacy" target="_blank" rel="noreferrer" style={styles.recaptchaLink}>Privacy</a>
+                        <span style={{ margin: '0 2px' }}>·</span>
+                        <a href="https://policies.google.com/terms" target="_blank" rel="noreferrer" style={styles.recaptchaLink}>Terms</a>
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
               </div>
 
               {/* Next Step Button (Blocked until CAPTCHA + Form Validated) */}
