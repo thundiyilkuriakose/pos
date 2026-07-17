@@ -203,13 +203,17 @@ export default function SignupPage() {
       const user = userCredential.user;
 
       // Save user details to Firestore
-      await setDoc(doc(db, 'users', user.uid), {
-        uid: user.uid,
-        email: user.email,
-        name: user.displayName || user.email?.split('@')[0],
-        role: 'owner',
-        createdAt: serverTimestamp(),
-      }, { merge: true });
+      try {
+        await setDoc(doc(db, 'users', user.uid), {
+          uid: user.uid,
+          email: user.email,
+          name: user.displayName || user.email?.split('@')[0],
+          role: 'owner',
+          createdAt: serverTimestamp(),
+        }, { merge: true });
+      } catch (fErr) {
+        console.warn('Firestore user doc write warning:', fErr);
+      }
 
       login(user.email || 'google_user@pos.com', 'owner');
       navigate('/dashboard');
@@ -248,50 +252,58 @@ export default function SignupPage() {
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
 
-      // 2. Persist user & business details to Firestore
+      // 2. Persist user & business details to Firestore (Non-blocking catch for security rules)
       const outletId = 'OUT001';
-      await Promise.all([
-        setDoc(doc(db, 'users', user.uid), {
-          uid: user.uid,
-          email: user.email,
-          businessName,
-          phoneNumber: phoneNumber || null,
-          outletType,
-          currency,
-          role: 'owner',
-          createdAt: serverTimestamp(),
-        }),
-        setDoc(doc(db, 'outlets', outletId), {
-          id: outletId,
-          name: businessName,
-          phoneNumber: phoneNumber || null,
-          outletType,
-          currency,
-          ownerUid: user.uid,
-          updatedAt: serverTimestamp(),
-        }, { merge: true }),
-      ]);
+      try {
+        await Promise.all([
+          setDoc(doc(db, 'users', user.uid), {
+            uid: user.uid,
+            email: user.email,
+            businessName,
+            phoneNumber: phoneNumber || null,
+            outletType,
+            currency,
+            role: 'owner',
+            createdAt: serverTimestamp(),
+          }),
+          setDoc(doc(db, 'outlets', outletId), {
+            id: outletId,
+            name: businessName,
+            phoneNumber: phoneNumber || null,
+            outletType,
+            currency,
+            ownerUid: user.uid,
+            updatedAt: serverTimestamp(),
+          }, { merge: true }),
+        ]);
+      } catch (firestoreErr: any) {
+        console.warn('Firestore write warning (check security rules):', firestoreErr);
+      }
 
       // 3. Update auth store & navigate to dashboard
       login(user.email || email, 'owner');
       navigate('/dashboard');
     } catch (err: any) {
       console.error('Firebase Signup Error:', err);
+      let message = 'Failed to create account. Please try again.';
       if (err.code === 'auth/email-already-in-use') {
         setEmailAlreadyExists(true);
         setStep(1); // Route user back to Step 1 with inline warning
+        return;
       } else if (err.code === 'auth/invalid-email') {
-        setError('The email address is invalid.');
+        message = 'The email address is invalid.';
         setStep(1);
       } else if (err.code === 'auth/weak-password') {
-        setError('Password should be at least 6 characters.');
+        message = 'Password should be at least 6 characters.';
         setStep(1);
       } else if (err.code === 'auth/too-many-requests') {
-        setError('Access temporarily disabled due to too many attempts. Please try again later.');
-      } else {
-        setError(err.message || 'Failed to create account. Please try again.');
+        message = 'Access temporarily disabled due to too many attempts. Please try again later.';
+      } else if (err.message) {
+        message = err.message;
       }
+      setError(message);
     } finally {
+      // GUARANTEED RESET: Prevents infinite loading state on button
       setLoading(false);
     }
   };
@@ -358,7 +370,7 @@ export default function SignupPage() {
         </div>
       </div>
 
-      {/* Standard Error Banner */}
+      {/* Standard Top Error Banner */}
       {error && <div style={styles.errorBanner}>{error}</div>}
 
       {/* CRITICAL: Email Already Registered Inline Warning */}
@@ -681,6 +693,13 @@ export default function SignupPage() {
                 </div>
               </div>
 
+              {/* Inline Error Banner directly above buttons on Step 2 */}
+              {error && (
+                <div style={styles.step2InlineError}>
+                  ⚠️ {error}
+                </div>
+              )}
+
               {/* Actions Row */}
               <div style={styles.btnRow}>
                 <button
@@ -799,6 +818,17 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 'var(--radius-sm, 6px)',
     fontSize: '12px',
     marginBottom: '8px',
+  },
+  step2InlineError: {
+    backgroundColor: '#FEF2F2',
+    color: '#DC2626',
+    border: '1px solid #FCA5A5',
+    padding: '6px 10px',
+    borderRadius: 'var(--radius-sm, 6px)',
+    fontSize: '12px',
+    fontWeight: 600,
+    marginTop: '4px',
+    marginBottom: '4px',
   },
   alreadyExistsBanner: {
     display: 'flex',

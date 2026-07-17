@@ -135,11 +135,14 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 'var(--space-2xl)',
+    padding: 'var(--space-xl)',
     backgroundColor: 'var(--color-surface)',
+    maxHeight: '100%',
+    overflowY: 'auto',
   },
   formCard: {
     width: '100%',
     maxWidth: '360px',
+    maxHeight: '100%',
   },
 };
