@@ -364,7 +364,7 @@ export default function SignupPage() {
       {/* CRITICAL: Email Already Registered Inline Warning */}
       {emailAlreadyExists && (
         <div style={styles.alreadyExistsBanner}>
-          <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0 }}>
+          <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0 }}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
           </svg>
           <div>
@@ -392,7 +392,7 @@ export default function SignupPage() {
                 disabled={loading}
                 style={styles.googleBtn}
               >
-                <svg width="18" height="18" viewBox="0 0 24 24" style={{ marginRight: '8px', flexShrink: 0 }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" style={{ marginRight: '8px', flexShrink: 0 }}>
                   <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
                   <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
                   <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
@@ -432,7 +432,7 @@ export default function SignupPage() {
                   />
                   {/* Live Validation Checkmark */}
                   {isEmailValid && !emailAlreadyExists && (
-                    <svg style={styles.rightCheckmark} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="2.5">
+                    <svg style={styles.rightCheckmark} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="2.5">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                     </svg>
                   )}
@@ -455,7 +455,7 @@ export default function SignupPage() {
                     placeholder="Create a strong password"
                     style={{
                       ...styles.input,
-                      paddingRight: '64px',
+                      paddingRight: '60px',
                     }}
                     required
                   />
@@ -468,11 +468,11 @@ export default function SignupPage() {
                     title={showPassword ? 'Hide password' : 'Show password'}
                   >
                     {showPassword ? (
-                      <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                      <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.88 9.88a3 3 0 104.24 4.24M1 1l22 22" />
                       </svg>
                     ) : (
-                      <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                      <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                         <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                       </svg>
@@ -481,7 +481,7 @@ export default function SignupPage() {
 
                   {/* Live Validation Checkmark */}
                   {isPasswordValid && (
-                    <svg style={styles.rightCheckmarkOffset} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="2.5">
+                    <svg style={styles.rightCheckmarkOffset} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="2.5">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                     </svg>
                   )}
@@ -545,7 +545,7 @@ export default function SignupPage() {
                         {captchaLoading ? (
                           <div className="captcha-spinner" style={styles.captchaSpinnerDot} />
                         ) : captchaVerified ? (
-                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="3">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="3">
                             <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                           </svg>
                         ) : null}
@@ -556,7 +556,7 @@ export default function SignupPage() {
                     </div>
 
                     <div style={styles.recaptchaRight}>
-                      <svg width="26" height="26" viewBox="0 0 24 24" fill="#4285F4">
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="#4285F4">
                         <path d="M12 2A10 10 0 0 0 2 12a10 10 0 0 0 10 10 10 10 0 0 0 10-10A10 10 0 0 0 12 2zm1 14.5h-2v-2h2v2zm0-4h-2V7h2v5.5z" />
                       </svg>
                       <span style={styles.recaptchaBrand}>reCAPTCHA</span>
@@ -609,7 +609,7 @@ export default function SignupPage() {
                     required
                   />
                   {isBusinessNameValid && (
-                    <svg style={styles.rightCheckmark} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="2.5">
+                    <svg style={styles.rightCheckmark} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="2.5">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                     </svg>
                   )}
@@ -633,7 +633,7 @@ export default function SignupPage() {
                     style={styles.input}
                   />
                   {phoneNumber.trim().length >= 7 && (
-                    <svg style={styles.rightCheckmark} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="2.5">
+                    <svg style={styles.rightCheckmark} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="2.5">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                     </svg>
                   )}
@@ -722,24 +722,27 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     width: '100%',
+    maxHeight: '100%',
+    overflowY: 'auto',
+    paddingBottom: '24px',
   },
   wizardHeader: {
-    marginBottom: '16px',
+    marginBottom: '10px',
   },
   stepIndicatorRow: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
     gap: '4px',
-    marginBottom: '6px',
+    marginBottom: '4px',
   },
   stepBadge: {
-    width: '28px',
-    height: '28px',
+    width: '26px',
+    height: '26px',
     borderRadius: '50%',
     backgroundColor: '#E5E7EB',
     color: '#6B7280',
-    fontSize: '13px',
+    fontSize: '12px',
     fontWeight: 700,
     display: 'flex',
     alignItems: 'center',
@@ -778,24 +781,24 @@ const styles: Record<string, React.CSSProperties> = {
   },
   title: {
     fontFamily: 'var(--font-display)',
-    fontSize: '22px',
+    fontSize: '20px',
     fontWeight: 700,
     color: 'var(--color-text, #1F2937)',
     marginBottom: '2px',
   },
   subtitle: {
-    fontSize: '13px',
+    fontSize: '12px',
     color: 'var(--color-text-muted, #6B7280)',
-    marginBottom: '14px',
+    marginBottom: '8px',
   },
   errorBanner: {
     backgroundColor: 'var(--color-danger-light, #FEE2E2)',
     color: 'var(--color-danger, #DC2626)',
     border: '1px solid #FCA5A5',
-    padding: '8px 12px',
+    padding: '6px 10px',
     borderRadius: 'var(--radius-sm, 6px)',
-    fontSize: '13px',
-    marginBottom: '12px',
+    fontSize: '12px',
+    marginBottom: '8px',
   },
   alreadyExistsBanner: {
     display: 'flex',
@@ -804,11 +807,11 @@ const styles: Record<string, React.CSSProperties> = {
     backgroundColor: '#FEF2F2',
     color: '#991B1B',
     border: '1px solid #FCA5A5',
-    padding: '10px 14px',
+    padding: '6px 10px',
     borderRadius: 'var(--radius-md, 8px)',
-    fontSize: '13px',
+    fontSize: '12px',
     fontWeight: 600,
-    marginBottom: '14px',
+    marginBottom: '8px',
     boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
   },
   alreadyExistsLink: {
@@ -830,7 +833,7 @@ const styles: Record<string, React.CSSProperties> = {
   stepContent: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '12px',
+    gap: '8px',
     width: '100%',
   },
   googleBtn: {
@@ -838,12 +841,12 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     justifyContent: 'center',
     width: '100%',
-    padding: '9px 12px',
+    padding: '7px 12px',
     borderRadius: 'var(--radius-md, 8px)',
     border: '1px solid var(--color-border, #E5E7EB)',
     backgroundColor: '#FFFFFF',
     color: '#374151',
-    fontSize: '14px',
+    fontSize: '13px',
     fontWeight: 600,
     cursor: 'pointer',
     boxShadow: '0 1px 2px rgba(0, 0, 0, 0.05)',
@@ -852,7 +855,7 @@ const styles: Record<string, React.CSSProperties> = {
   dividerRow: {
     display: 'flex',
     alignItems: 'center',
-    margin: '2px 0',
+    margin: '0',
   },
   dividerLine: {
     flex: 1,
@@ -861,17 +864,17 @@ const styles: Record<string, React.CSSProperties> = {
   },
   dividerText: {
     padding: '0 8px',
-    fontSize: '11px',
+    fontSize: '10px',
     fontWeight: 600,
     color: '#9CA3AF',
   },
   inputGroup: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '4px',
+    gap: '2px',
   },
   label: {
-    fontSize: '13px',
+    fontSize: '12px',
     fontWeight: 600,
     color: 'var(--color-text, #374151)',
   },
@@ -899,7 +902,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   rightCheckmarkOffset: {
     position: 'absolute',
-    right: '40px',
+    right: '36px',
     pointerEvents: 'none',
   },
   eyeToggleBtn: {
@@ -907,7 +910,7 @@ const styles: Record<string, React.CSSProperties> = {
     right: '10px',
     background: 'none',
     border: 'none',
-    padding: '4px',
+    padding: '2px',
     color: '#6B7280',
     cursor: 'pointer',
     display: 'flex',
@@ -918,8 +921,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   input: {
     width: '100%',
-    fontSize: '14px',
-    padding: '9px 36px 9px 36px',
+    fontSize: '13px',
+    padding: '7px 32px 7px 34px',
     borderRadius: 'var(--radius-md, 8px)',
     border: '1px solid var(--color-border, #D1D5DB)',
     outline: 'none',
@@ -934,8 +937,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   selectInput: {
     width: '100%',
-    fontSize: '14px',
-    padding: '9px 12px',
+    fontSize: '13px',
+    padding: '7px 12px',
     borderRadius: 'var(--radius-md, 8px)',
     border: '1px solid var(--color-border, #D1D5DB)',
     outline: 'none',
@@ -953,7 +956,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   strengthBarTrack: {
     width: '100%',
-    height: '4px',
+    height: '3px',
     backgroundColor: '#E5E7EB',
     borderRadius: '2px',
     overflow: 'hidden',
@@ -971,20 +974,20 @@ const styles: Record<string, React.CSSProperties> = {
   checkboxLabel: {
     display: 'flex',
     alignItems: 'flex-start',
-    gap: '8px',
+    gap: '6px',
     cursor: 'pointer',
-    marginTop: '2px',
-    marginBottom: '2px',
+    marginTop: '1px',
+    marginBottom: '1px',
   },
   checkboxInput: {
-    marginTop: '3px',
+    marginTop: '2px',
     cursor: 'pointer',
     accentColor: 'var(--color-primary, #611701)',
   },
   checkboxText: {
-    fontSize: '12px',
+    fontSize: '11px',
     color: 'var(--color-text-muted, #4B5563)',
-    lineHeight: '1.4',
+    lineHeight: '1.3',
   },
   inlineLink: {
     color: 'var(--color-primary, #611701)',
@@ -992,14 +995,14 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 500,
   },
   recaptchaSection: {
-    marginTop: '4px',
-    marginBottom: '4px',
+    marginTop: '2px',
+    marginBottom: '2px',
   },
   recaptchaBox: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: '10px 14px',
+    padding: '6px 10px',
     backgroundColor: '#F9FAFB',
     border: '1px solid #D1D5DB',
     borderRadius: 'var(--radius-md, 8px)',
@@ -1008,11 +1011,11 @@ const styles: Record<string, React.CSSProperties> = {
   recaptchaLeft: {
     display: 'flex',
     alignItems: 'center',
-    gap: '10px',
+    gap: '8px',
   },
   recaptchaCheckbox: {
-    width: '24px',
-    height: '24px',
+    width: '20px',
+    height: '20px',
     borderRadius: '4px',
     border: '2px solid #C1C7D0',
     backgroundColor: '#FFFFFF',
@@ -1029,14 +1032,14 @@ const styles: Record<string, React.CSSProperties> = {
     backgroundColor: '#F0FDF4',
   },
   captchaSpinnerDot: {
-    width: '14px',
-    height: '14px',
+    width: '12px',
+    height: '12px',
     borderRadius: '50%',
     border: '2px solid #D1D5DB',
     borderTopColor: '#3B82F6',
   },
   recaptchaText: {
-    fontSize: '13px',
+    fontSize: '12px',
     fontWeight: 600,
     color: '#374151',
     cursor: 'pointer',
@@ -1048,7 +1051,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
   },
   recaptchaBrand: {
-    fontSize: '9px',
+    fontSize: '8px',
     fontWeight: 700,
     color: '#6B7280',
     letterSpacing: '0.4px',
@@ -1065,16 +1068,16 @@ const styles: Record<string, React.CSSProperties> = {
   btnRow: {
     display: 'flex',
     gap: '8px',
-    marginTop: '4px',
+    marginTop: '2px',
   },
   submitBtn: {
     fontFamily: 'var(--font-display)',
     fontWeight: 600,
-    fontSize: '14px',
+    fontSize: '13px',
     color: 'var(--color-accent-text, #FFFFFF)',
     backgroundColor: 'var(--color-accent, #611701)',
     border: 'none',
-    padding: '10px 14px',
+    padding: '8px 12px',
     borderRadius: 'var(--radius-md, 8px)',
     cursor: 'pointer',
     boxShadow: 'var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.05))',
@@ -1083,11 +1086,11 @@ const styles: Record<string, React.CSSProperties> = {
   secondaryBtn: {
     fontFamily: 'var(--font-body)',
     fontWeight: 600,
-    fontSize: '14px',
+    fontSize: '13px',
     color: '#374151',
     backgroundColor: '#F3F4F6',
     border: '1px solid #D1D5DB',
-    padding: '10px 14px',
+    padding: '8px 12px',
     borderRadius: 'var(--radius-md, 8px)',
     cursor: 'pointer',
     transition: 'all 0.2s ease',
@@ -1097,17 +1100,17 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'not-allowed',
   },
   microcopyText: {
-    fontSize: '12px',
+    fontSize: '11px',
     color: 'var(--color-text-muted, #6B7280)',
     textAlign: 'center',
-    marginTop: '6px',
+    marginTop: '4px',
     fontWeight: 500,
     fontStyle: 'italic',
   },
   footerNote: {
-    fontSize: '13px',
+    fontSize: '12px',
     color: 'var(--color-text-muted, #6B7280)',
-    marginTop: '16px',
+    marginTop: '10px',
     textAlign: 'center',
   },
   footerLink: {
