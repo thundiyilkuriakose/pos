@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, type FormEvent } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { createUserWithEmailAndPassword } from 'firebase/auth';
+import { auth } from '../../lib/firebase';
 import { useAuthStore } from '../../stores/auth.store.ts';
 
 export default function SignupPage() {
@@ -7,20 +9,44 @@ export default function SignupPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
   
   const login = useAuthStore((state) => state.login);
   const navigate = useNavigate();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    setError('');
+
     if (!businessName || !email || !password) {
       setError('Please fill in all fields.');
       return;
     }
     
-    // Simulate signup & autologin
-    login(email, 'owner');
-    navigate('/dashboard');
+    setLoading(true);
+    try {
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
+      login(user.email || email, 'owner');
+      navigate('/dashboard');
+    } catch (err: any) {
+      console.error('Firebase Signup Error:', err);
+      let message = 'Failed to create account. Please try again.';
+      if (err.code === 'auth/email-already-in-use') {
+        message = 'This email address is already registered.';
+      } else if (err.code === 'auth/invalid-email') {
+        message = 'The email address is invalid.';
+      } else if (err.code === 'auth/weak-password') {
+        message = 'Password should be at least 6 characters.';
+      } else if (err.code === 'auth/too-many-requests') {
+        message = 'Access temporarily disabled due to too many attempts. Please try again later.';
+      } else if (err.message) {
+        message = err.message;
+      }
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -67,8 +93,8 @@ export default function SignupPage() {
           />
         </div>
 
-        <button type="submit" style={styles.submitBtn}>
-          Get Started
+        <button type="submit" disabled={loading} style={styles.submitBtn}>
+          {loading ? 'Creating Account...' : 'Get Started'}
         </button>
       </form>
 
