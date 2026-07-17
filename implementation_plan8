@@ -1,0 +1,36 @@
+# Implementation Plan: Migrate Firebase Project Configuration to SkillSetGo-PoS
+
+Migrate and verify the workspace Firebase configuration to connect to the isolated **SkillSetGo-PoS** Firebase project (`skillsetgo-pos`).
+
+## User Review Required
+
+> [!NOTE]
+> The codebase environment variable fallbacks and `.firebaserc` already default to `skillsetgo-pos`. After committing and pushing these changes, remember to update the `VITE_FIREBASE_*` environment variables in your Vercel deployment dashboard for both `pos` and `digital-menu` projects.
+
+## Proposed Changes
+
+### Firebase Initialization & Environment Configs
+
+#### [MODIFY] [firebase.ts](file:///e:/SkillSetGo%20-%20POS/apps/pos/src/lib/firebase.ts)
+- Confirm `firebaseConfig` uses `import.meta.env.VITE_FIREBASE_*` with `skillsetgo-pos` domain/project fallbacks.
+
+#### [MODIFY] [firebase.ts](file:///e:/SkillSetGo%20-%20POS/apps/digital-menu/src/lib/firebase.ts)
+- Confirm `firebaseConfig` uses `import.meta.env.VITE_FIREBASE_*` with `skillsetgo-pos` domain/project fallbacks.
+
+#### [MODIFY] [.firebaserc](file:///e:/SkillSetGo%20-%20POS/.firebaserc)
+- Confirm default project is set to `skillsetgo-pos`.
+
+#### [MODIFY] [firestore.rules](file:///e:/SkillSetGo%20-%20POS/firestore.rules)
+- Verify security rules for `outlets`, `items`, `categories`, `tables`, `parties`, `orders`, `staff`, `devices`, `tax_groups`, `addon_groups`, and `inventory`.
+
+## Verification & Git Workflow
+
+### Automated / Manual Verification
+- Validate all references across the codebase point to `skillsetgo-pos`.
+- Verify `firestore.rules` syntax and structure.
+
+### Git Commit & Push
+Run the following commands:
+1. `git add .`
+2. `git commit -m "chore: migrate to isolated SkillSetGo-PoS firebase project"`
+3. `git push`
